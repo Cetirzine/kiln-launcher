@@ -384,6 +384,10 @@ struct ResourceSearchPage: View {
     @PState private var target: String = ""
     /// Mod 加载器筛选，空字符串表示全部
     @PState private var loader: String = ""
+    /// 来源：空字符串表示全部（Modrinth 在前，CurseForge 补充）
+    @PState private var source: String = ""
+    /// 当前结果是否来自中文名表（不支持“加载更多”）
+    @PState private var fromNameTable = false
     @PState private var detail: Modrinth.Project?
     @PState private var searchTask: Task<Void, Never>?
 
@@ -406,6 +410,15 @@ struct ResourceSearchPage: View {
                     ForEach(state.instances.filter { $0.category != .error }) { Text($0.name).tag($0.name) }
                 }
                 .frame(width: 240)
+            }
+            HStack(spacing: 10) {
+                Picker("", selection: $source) {
+                    Text(T("全部来源", "All sources")).tag("")
+                    Text("Modrinth").tag(Modrinth.Source.modrinth.rawValue)
+                    Text("CurseForge").tag(Modrinth.Source.curseforge.rawValue)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                Spacer()
             }
             if type == .mod {
                 HStack(spacing: 10) {
@@ -431,12 +444,13 @@ struct ResourceSearchPage: View {
                     ForEach(results) { p in
                         ProjectRow(project: p).onTapGesture { detail = p }
                     }
-                    if !results.isEmpty && results.count % 30 == 0 {
+                    if !results.isEmpty && !fromNameTable && results.count >= 30 {
                         Button(T("加载更多", "Load more")) { runSearch(more: true) }.buttonStyle(.kiln).padding()
                     }
                 }
             }
-            Text(T("搜索结果来自 Modrinth", "Results from Modrinth")).font(.system(size: 11)).foregroundStyle(Theme.text3)
+            Text(T("搜索结果来自 Modrinth 与 CurseForge（经 MCIM 镜像）；可以用中文、拼音或拼音首字母搜索", "Results from Modrinth and CurseForge (via the MCIM mirror)"))
+                .font(.system(size: 11)).foregroundStyle(Theme.text3)
         }
         .padding(.horizontal, 24).padding(.bottom, 12)
         .onAppear {
@@ -451,6 +465,8 @@ struct ResourceSearchPage: View {
             runSearch()
         }
         .onChange(of: loader) { _, _ in runSearch() }
+        .onChange(of: source) { _, _ in runSearch() }
+        .task { await ModNames.shared.refresh() }
         .onChange(of: query) { _, _ in
             searchTask?.cancel()
             searchTask = Task { try? await Task.sleep(nanoseconds: 400_000_000); if !Task.isCancelled { runSearch() } }
@@ -468,18 +484,56 @@ struct ResourceSearchPage: View {
     }
 
     private func runSearch(more: Bool = false) {
-        let offset = more ? results.count : 0
-        let q = query, gv = instance?.vanillaVersion, lf = loaderFilter
+        let q = query.trimmingCharacters(in: .whitespaces), gv = instance?.vanillaVersion, lf = loaderFilter
+        let type = type, source = source
+        let useModrinth = source != Modrinth.Source.curseforge.rawValue
+        let useCurseForge = source != Modrinth.Source.modrinth.rawValue
         Task { @MainActor in
             loading = true
             error = nil
             defer { loading = false }
-            do {
-                let r = try await Modrinth.search(q, type: type, gameVersion: gv, loader: lf, offset: offset)
-                results = more ? results + r : r
-            } catch {
-                self.error = error.friendly
+            // 中文名表：中文、拼音或首字母搜索
+            let named = type == .mod && !q.isEmpty ? ModNames.shared.search(q) : []
+            if ModNames.containsCJK(q) && !more {
+                // 中文搜索：从名表找到对应的 Mod，再按 slug 取回
+                fromNameTable = true
+                var list: [Modrinth.Project] = []
+                if useModrinth { list += (try? await Modrinth.projects(named, gameVersion: gv, loader: lf)) ?? [] }
+                if useCurseForge && list.count < 10 {
+                    // CurseForge 用名表中的英文 slug 作为搜索词补充
+                    for slug in named.prefix(3) where !list.contains(where: { $0.slug == slug }) {
+                        if let hit = try? await CurseForge.search(slug.replacingOccurrences(of: "-", with: " "), type: type, gameVersion: gv, loader: lf).first(where: { $0.slug == slug }) {
+                            list.append(hit)
+                        }
+                    }
+                }
+                results = list
+                if list.isEmpty {
+                    error = named.isEmpty
+                        ? T("名表里没有找到“\(q)”，可以试试英文名。", "\"\(q)\" isn't in the name table; try the English name.")
+                        : T("找到了对应的 Mod，但没有适用于当前版本或加载器的。", "Found matching mods, but none for this version or loader.")
+                }
+                return
             }
+            fromNameTable = false
+            let offset = more ? results.count : 0
+            async let mr: [Modrinth.Project] = useModrinth ? Modrinth.search(q, type: type, gameVersion: gv, loader: lf, offset: offset) : []
+            async let cf: [Modrinth.Project] = useCurseForge ? CurseForge.search(q, type: type, gameVersion: gv, loader: lf, offset: offset) : []
+            var merged: [Modrinth.Project] = []
+            var failures: [String] = []
+            do { merged += try await mr } catch { failures.append("Modrinth：\(error.friendly)") }
+            do {
+                // CurseForge 作为补充：去掉与 Modrinth 重复的项目
+                let known = Set(merged.map(\.slug) + (more ? results.map(\.slug) : []))
+                merged += try await cf.filter { !known.contains($0.slug) }
+            } catch { failures.append("CurseForge：\(error.friendly)") }
+            // 拼音或首字母命中名表时，把对应的 Mod 放在最前面
+            if !more, !named.isEmpty, useModrinth, !q.contains(" ") {
+                let pinned = (try? await Modrinth.projects(Array(named.prefix(5)), gameVersion: gv, loader: lf)) ?? []
+                merged = pinned + merged.filter { m in !pinned.contains { $0.slug == m.slug } }
+            }
+            results = more ? results + merged : merged
+            if merged.isEmpty && !failures.isEmpty { error = failures.joined(separator: "\n") }
         }
     }
 }
@@ -494,10 +548,21 @@ struct ProjectRow: View {
             }
             .frame(width: 44, height: 44).clipShape(RoundedRectangle(cornerRadius: 3))
             VStack(alignment: .leading, spacing: 3) {
-                Text(project.title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Theme.text)
+                // 英文名后面跟灰色的中文名
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(project.title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
+                    if let zh = chineseName {
+                        Text(zh).font(.system(size: 12)).foregroundStyle(Theme.text3).lineLimit(1)
+                    }
+                }
                 Text(project.description).font(.system(size: 11.5)).foregroundStyle(Theme.text2).lineLimit(2)
-                Text(project.categories.prefix(4).joined(separator: ", "))
-                    .font(.system(size: 11)).foregroundStyle(Theme.text3)
+                HStack(spacing: 8) {
+                    if project.source == .curseforge {
+                        Text("CurseForge").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Color(hex: 0xC0592B))
+                    }
+                    Text(project.categories.prefix(4).joined(separator: ", "))
+                        .font(.system(size: 11)).foregroundStyle(Theme.text3).lineLimit(1)
+                }
             }
             Spacer()
             Label(formatCount(project.downloads), systemImage: "arrow.down.circle")
@@ -508,6 +573,12 @@ struct ProjectRow: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.stroke).frame(height: 1) }
         .contentShape(Rectangle())
         .onHover { hover = $0 }
+    }
+
+    /// 中文界面下显示中文名（与英文名相同时不显示）
+    private var chineseName: String? {
+        guard Localizer.shared.language != .en, let zh = ModNames.shared.chinese(project.slug), zh != project.title else { return nil }
+        return T(zh, zh)
     }
 
     private func formatCount(_ n: Int) -> String {
@@ -525,18 +596,37 @@ struct ProjectVersionsSheet: View {
     @PState private var loading = true
     @PState private var error: String?
 
+    private var website: String {
+        project.pageURL ?? "https://modrinth.com/\(type == .shader ? "shader" : type.rawValue)/\(project.slug)"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 AsyncImage(url: project.iconURL) { $0.resizable() } placeholder: { Theme.panel2 }
                     .frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 3))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(project.title).font(.system(size: 16, weight: .bold))
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(project.title).font(.system(size: 16, weight: .bold))
+                        if Localizer.shared.language != .en, let zh = ModNames.shared.chinese(project.slug), zh != project.title {
+                            Text(T(zh, zh)).font(.system(size: 13)).foregroundStyle(Theme.text3)
+                        }
+                    }
                     Text(project.description).font(.system(size: 12)).foregroundStyle(Theme.text2).lineLimit(2)
                 }
                 Spacer()
-                Button(T("查看网页", "Website")) { Links.open("https://modrinth.com/\(type == .shader ? "shader" : type.rawValue)/\(project.slug)") }
+                Button(T("在 \(project.source.rawValue) 查看", "View on \(project.source.rawValue)")) { Links.open(website) }
                     .buttonStyle(.kiln)
+                if type == .mod && Localizer.shared.language != .en {
+                    // 跳转到 MC 百科查看中文资料（只是链接，不抓取内容）
+                    Button(T("在 MC 百科查看", "View on MC Wiki (mcmod.cn)")) {
+                        var allowed = CharacterSet.alphanumerics
+                        allowed.insert(charactersIn: "-._~")
+                        let key = (ModNames.shared.chinese(project.slug) ?? project.title).addingPercentEncoding(withAllowedCharacters: allowed) ?? project.slug
+                        Links.open("https://search.mcmod.cn/s?key=\(key)")
+                    }
+                    .buttonStyle(.kiln)
+                }
             }
             Text(instance.map { T("将安装到版本 \($0.name)", "Will be installed into \($0.name)") } ?? T("未选择版本，将另存为文件", "No instance selected; the file will be saved"))
                 .font(.system(size: 12)).foregroundStyle(Theme.text3)
@@ -549,8 +639,14 @@ struct ProjectVersionsSheet: View {
                     }
                     ForEach(versions) { v in
                         ListItem(systemIcon: "shippingbox.fill", title: v.name.isEmpty ? v.number : v.name,
-                                 info: "\(v.gameVersions.suffix(3).joined(separator: ", ")) · \(v.loaders.joined(separator: ", ")) · \(v.published.formatted(date: .abbreviated, time: .omitted))") {
-                            Button(T("安装", "Install")) { download(v) }.buttonStyle(.kilnPrimary)
+                                 info: "\(v.gameVersions.suffix(3).joined(separator: ", "))   \(v.loaders.joined(separator: ", "))   \(v.published.formatted(date: .abbreviated, time: .omitted))") {
+                            if v.blocked {
+                                // 作者禁止第三方下载：只能到网站手动下载
+                                Button(T("到网站下载", "Download on website")) { Links.open(website) }.buttonStyle(.kiln)
+                                    .help(T("作者不允许第三方启动器下载此文件", "The author doesn't allow third-party launchers to download this file"))
+                            } else {
+                                Button(T("安装", "Install")) { download(v) }.buttonStyle(.kilnPrimary)
+                            }
                         }
                     }
                 }
@@ -562,7 +658,10 @@ struct ProjectVersionsSheet: View {
         .task {
             do {
                 let loader = type == .mod ? self.loader : nil
-                versions = try await Modrinth.versions(project.id, gameVersion: instance?.vanillaVersion, loader: loader)
+                switch project.source {
+                case .modrinth: versions = try await Modrinth.versions(project.id, gameVersion: instance?.vanillaVersion, loader: loader)
+                case .curseforge: versions = try await CurseForge.files(project, gameVersion: instance?.vanillaVersion, loader: loader)
+                }
             } catch { self.error = error.friendly }
             loading = false
         }
@@ -578,9 +677,11 @@ struct ProjectVersionsSheet: View {
             guard panel.runModal() == .OK, let u = panel.url else { return }
             dest = u
         }
+        var item = DownloadItem(url: v.fileURL, destination: dest, sha1: v.sha1, size: v.size)
+        if project.source == .curseforge { item.urls = CurseForge.downloadURLs(v) }
         JobCenter.shared.start(T("下载 \(v.fileName)", "Download \(v.fileName)")) { job in
             job.enter(v.fileName, index: 0, of: 1)
-            try await Downloader.run([DownloadItem(url: v.fileURL, destination: dest, sha1: v.sha1, size: v.size)], job: job)
+            try await Downloader.run([item], job: job)
         }
         dismiss()
     }

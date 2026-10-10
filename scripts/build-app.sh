@@ -20,6 +20,8 @@ if [ -n "${KILN_MS_CLIENT_ID:-}" ]; then
     trap 'mv "$ID_FILE.orig" "$ID_FILE"' EXIT
     sed -i '' "s/package static let value = \".*\"/package static let value = \"$KILN_MS_CLIENT_ID\"/" "$ID_FILE"
 fi
+# 内置的 Mod 中文名表与 assets/mod-names-zh.json 保持同步
+python3 scripts/gen-mod-names.py
 swift build -c release "${ARCH_FLAGS[@]}"
 BIN="$(swift build -c release "${ARCH_FLAGS[@]}" --show-bin-path)/Kiln"
 

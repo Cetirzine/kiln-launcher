@@ -39,7 +39,8 @@
 - 离线账号与微软账号（设备代码登录，刷新令牌保存在钥匙串）
 - 自动选择 / 下载 Java（Mojang 官方运行时、Azul Zulu）
 - 版本独立游戏目录、独立 Java / 内存 / 参数设置
-- Modrinth 的 Mod、资源包、光影搜索与下载，Mod 可按加载器（Fabric、Forge、NeoForge、Quilt）筛选；本地 Mod 启用 / 禁用
+- Modrinth 与 CurseForge（经 MCIM 镜像，可填写官方 API 密钥）的 Mod、资源包、光影搜索与下载，Mod 可按加载器（Fabric、Forge、NeoForge、Quilt）筛选；本地 Mod 启用 / 禁用
+- Mod 中文名：英文名后显示中文名，可用中文、拼音或拼音首字母搜索（如 `jxdl` → 机械动力）
 - 游戏日志（解析 log4j XML）、崩溃原因分析、导出启动脚本
 - 自动检查新版本，确认后下载、校验并替换自身
 - 简体中文 / 繁體中文（自动转换）/ English
@@ -50,6 +51,16 @@
 - 版本图标使用 Minecraft 原版方块材质：从本机已安装的游戏客户端中读取并缓存，不随应用分发；本机还没有游戏时使用绘制的图标
 - 每个版本的图标可以自定义：在版本设置中点击图标，从背包样式的选择器里选择方块，或输入任意方块的材质名
 - 跟随系统浅色 / 深色外观
+
+## 补充 Mod 中文名
+
+中文名表是 [`assets/mod-names-zh.json`](assets/mod-names-zh.json)，键为 Modrinth 的 slug：
+
+```json
+"create": { "zh": "机械动力", "aliases": ["机动"] }
+```
+
+欢迎提交 PR 补充或修正。启动器每天会从仓库自动拉取最新的名表，不需要等新版本。
 
 ## 构建
 

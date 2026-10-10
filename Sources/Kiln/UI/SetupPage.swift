@@ -254,6 +254,11 @@ struct DownloadSettings: View {
             SettingRow(title: T("新版本使用与启动器相同的语言", "Use the launcher language for new instances")) {
                 Toggle("", isOn: $s.gameLanguageAuto).toggleStyle(.switch).labelsHidden()
             }
+            SettingRow(title: T("CurseForge API 密钥", "CurseForge API key"),
+                       help: T("可选。留空时通过 MCIM 社区镜像访问 CurseForge；填写官方密钥后改用官方接口。", "Optional. When empty, CurseForge is accessed through the MCIM community mirror; with an official key, the official API is used.")) {
+                SecureField(T("留空则使用 MCIM 镜像", "Leave empty to use the MCIM mirror"), text: $s.curseforgeKey)
+                    .textFieldStyle(.roundedBorder).frame(maxWidth: 320)
+            }
         }
     }
 

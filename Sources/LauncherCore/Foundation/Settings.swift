@@ -50,6 +50,8 @@ package final class LauncherSettings {
 
     package var msClientId: String { didSet { d.set(msClientId, forKey: "msClientId") } }
     package var autoCheckUpdates: Bool { didSet { d.set(autoCheckUpdates, forKey: "autoCheckUpdates") } }
+    /// CurseForge 官方 API 密钥；为空时通过 MCIM 镜像访问
+    package var curseforgeKey: String { didSet { d.set(curseforgeKey, forKey: "curseforgeKey") } }
     package var lastUpdateCheck: Date? { didSet { d.set(lastUpdateCheck, forKey: "lastUpdateCheck") } }
     package var debugLog: Bool { didSet { d.set(debugLog, forKey: "debugLog") } }
 
@@ -96,6 +98,7 @@ package final class LauncherSettings {
         gameLanguageAuto = d.bool(forKey: "gameLanguageAuto")
         msClientId = d.string(forKey: "msClientId") ?? ""
         autoCheckUpdates = d.object(forKey: "autoCheckUpdates") as? Bool ?? true
+        curseforgeKey = d.string(forKey: "curseforgeKey") ?? ""
         lastUpdateCheck = d.object(forKey: "lastUpdateCheck") as? Date
         debugLog = d.bool(forKey: "debugLog") || ProcessInfo.processInfo.environment["KILN_DEBUG"] != nil
         Localizer.shared.language = language

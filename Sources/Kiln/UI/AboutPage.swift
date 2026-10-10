@@ -50,6 +50,10 @@ struct AboutPage: View {
                         }
                         ListItem(systemIcon: "magnifyingglass", title: "Modrinth",
                                  info: T("Mod、资源包与光影的搜索与下载。", "Search and downloads for mods, resource packs and shaders."))
+                        ListItem(systemIcon: "flame", title: "CurseForge 与 MCIM（z0z0r4）",
+                                 info: T("CurseForge 上的 Mod 与资源；MCIM 提供了无需密钥的社区镜像。", "Mods and resources on CurseForge; MCIM provides a community mirror that needs no API key.")) {
+                            Button("MCIM") { Links.open("https://mod.mcimirror.top") }.buttonStyle(.kiln)
+                        }
                         Text(T("界面布局参考了 Lunar Client。", "The layout is inspired by Lunar Client."))
                             .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
                     }

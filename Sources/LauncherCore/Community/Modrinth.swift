@@ -23,6 +23,9 @@ package enum Modrinth {
         }
     }
 
+    /// 资源来源
+    package enum Source: String, Sendable { case modrinth = "Modrinth", curseforge = "CurseForge" }
+
     package struct Project: Identifiable, Hashable {
         package let id: String
         package let slug: String
@@ -31,6 +34,9 @@ package enum Modrinth {
         package let iconURL: URL?
         package let downloads: Int
         package let categories: [String]
+        package var source: Source = .modrinth
+        /// 项目网页
+        package var pageURL: String?
     }
 
     package struct Version: Identifiable, Hashable {
@@ -44,6 +50,8 @@ package enum Modrinth {
         package let sha1: String?
         package let size: Int64?
         package let published: Date
+        /// 作者禁止第三方下载（CurseForge），需要到网站手动下载
+        package var blocked = false
     }
 
     private static func encode(_ v: String) -> String {
@@ -71,6 +79,25 @@ package enum Modrinth {
                            description: h["description"].string ?? "", iconURL: h["icon_url"].string.flatMap(URL.init(string:)),
                            downloads: h["downloads"].int ?? 0, categories: h["categories"].array.compactMap(\.string))
         }
+    }
+
+    /// 按 slug 批量获取项目（用于中文名搜索），按给定顺序返回，并按游戏版本与加载器筛选
+    package static func projects(_ slugs: [String], gameVersion: String?, loader: String?) async throws -> [Project] {
+        guard !slugs.isEmpty else { return [] }
+        let ids = "[" + slugs.prefix(60).map { "\"\($0)\"" }.joined(separator: ",") + "]"
+        let j = try await Net.json(urls: ["\(api)/projects?ids=\(encode(ids))"])
+        let allowed = loader.map { Set(compatibleLoaders($0)) }
+        var bySlug: [String: Project] = [:]
+        for p in j.array {
+            guard let id = p["id"].string, let slug = p["slug"].string else { continue }
+            let loaders = p["loaders"].array.compactMap(\.string)
+            if let gameVersion, !gameVersion.isEmpty, !p["game_versions"].array.compactMap(\.string).contains(gameVersion) { continue }
+            if let allowed, Set(loaders).isDisjoint(with: allowed) { continue }
+            bySlug[slug] = Project(id: id, slug: slug, title: p["title"].string ?? slug, description: p["description"].string ?? "",
+                                   iconURL: p["icon_url"].string.flatMap(URL.init(string:)), downloads: p["downloads"].int ?? 0,
+                                   categories: p["categories"].array.compactMap(\.string) + loaders)
+        }
+        return slugs.compactMap { bySlug[$0] }
     }
 
     package static func versions(_ projectId: String, gameVersion: String?, loader: String?) async throws -> [Version] {

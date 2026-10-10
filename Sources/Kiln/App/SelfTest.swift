@@ -257,3 +257,41 @@ enum ModrinthCheck {
         print(ok ? "✔ 加载器筛选正常" : "✘ 加载器筛选有问题")
     }
 }
+
+/// `--mod-search-check`：检查中文名、中文与拼音搜索，以及 CurseForge 补充来源
+enum ModSearchCheck {
+    nonisolated static func run() {
+        let sem = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var ok = true
+        func expect(_ c: Bool, _ name: String) { print(c ? "  ✔ \(name)" : "  ✘ \(name)"); if !c { ok = false } }
+        Task {
+            defer { sem.signal() }
+            let names = ModNames.shared
+            print("中文名表：\(names.count) 条")
+            expect(names.chinese("create") == "机械动力", "中文名：create → 机械动力")
+            expect(names.search("机械动力").first == "create", "中文搜索：机械动力")
+            expect(names.search("機械動力").first == "create", "繁体搜索：機械動力")
+            expect(names.search("jxdl").first == "create", "首字母搜索：jxdl")
+            expect(names.search("jixiedongli").first == "create", "拼音搜索：jixiedongli")
+            expect(names.search("钠").first == "sodium", "中文搜索：钠")
+            expect(names.search("汉化").contains("i18nupdatemod"), "别名搜索：汉化")
+            expect(names.search("ae2").first == "ae2", "英文别名：ae2")
+            let projects = (try? await Modrinth.projects(names.search("背包"), gameVersion: "1.20.1", loader: "Forge")) ?? []
+            expect(!projects.isEmpty, "中文搜索结果：背包（1.20.1 Forge）→ \(projects.map(\.title).joined(separator: "、"))")
+            let cf = (try? await CurseForge.search("create", type: .mod, gameVersion: "1.20.1", loader: "Forge")) ?? []
+            expect(cf.first?.slug == "create", "CurseForge 搜索：create → \(cf.prefix(3).map(\.title).joined(separator: "、"))")
+            if let create = cf.first(where: { $0.slug == "create" }) {
+                let files = (try? await CurseForge.files(create, gameVersion: "1.20.1", loader: "Forge")) ?? []
+                expect(!files.isEmpty && files.allSatisfy { $0.loaders.contains("forge") && $0.gameVersions.contains("1.20.1") },
+                       "CurseForge 文件筛选：\(files.count) 个，最新 \(files.first?.fileName ?? "-")")
+                if let f = files.first(where: { !$0.blocked }) {
+                    expect(CurseForge.downloadURLs(f).count == 2, "CurseForge 下载地址含镜像备用")
+                }
+            }
+            let shaders = (try? await CurseForge.search("complementary", type: .shader, gameVersion: nil, loader: nil)) ?? []
+            expect(!shaders.isEmpty, "CurseForge 光影：\(shaders.prefix(2).map(\.title).joined(separator: "、"))")
+        }
+        while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        print(ok ? "✔ 全部通过" : "✘ 有检查未通过")
+    }
+}

@@ -36,6 +36,10 @@ enum Entry {
             while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
             exit(code)
         }
+        if args.contains("--mod-search-check") {
+            ModSearchCheck.run()
+            exit(0)
+        }
         if args.contains("--modrinth-check") {
             ModrinthCheck.run()
             exit(0)
