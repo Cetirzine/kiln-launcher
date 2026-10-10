@@ -274,6 +274,84 @@ struct SegmentBar<T: Hashable>: View {
     }
 }
 
+/// 分段选择：各段等宽、文字居中。
+/// segmentWidth 为 nil 时铺满可用宽度；给定时每段固定宽度，多个控件上下排列时分段可以对齐。
+struct Segmented<T: Hashable>: View {
+    let items: [(T, String)]
+    @Binding var selection: T
+    var segmentWidth: CGFloat?
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.offset) { i, item in
+                let selected = item.0 == selection
+                if i > 0 {
+                    // 选中段两侧不画分隔线
+                    Rectangle().fill(selected || items[i - 1].0 == selection ? Color.clear : Theme.stroke)
+                        .frame(width: 1, height: 14)
+                }
+                SegmentItem(title: item.1, selected: selected, width: segmentWidth) { selection = item.0 }
+            }
+        }
+        .padding(2)
+        .frame(height: 28)
+        .background(Theme.panel2, in: RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.stroke))
+        .fixedSize(horizontal: segmentWidth != nil, vertical: true)
+    }
+
+    private struct SegmentItem: View {
+        let title: String
+        let selected: Bool
+        let width: CGFloat?
+        let action: () -> Void
+        @PState private var hover = false
+
+        var body: some View {
+            Button(action: action) {
+                Text(title)
+                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Theme.text : Theme.text2)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                    .padding(.horizontal, 4)
+                    .frame(width: width).frame(maxWidth: width == nil ? .infinity : nil, maxHeight: .infinity)
+                    .background {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(selected ? Theme.panel : hover ? Theme.panelHover : Color.clear)
+                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(selected ? Theme.stroke : Color.clear))
+                    }
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hover = $0 }
+        }
+    }
+}
+
+/// 搜索框：与 Segmented 同高，用于所有列表的搜索 / 筛选
+struct SearchField: View {
+    let placeholder: String
+    @Binding var text: String
+    var onSubmit: () -> Void = {}
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").font(.system(size: 11.5)).foregroundStyle(Theme.text3)
+            TextField(placeholder, text: $text).textFieldStyle(.plain).font(.system(size: 12.5))
+                .onSubmit(onSubmit)
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 11.5)).foregroundStyle(Theme.text3)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 9).frame(height: 28)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.stroke))
+    }
+}
+
 /// 设置项一行
 struct SettingRow<Content: View>: View {
     let title: String

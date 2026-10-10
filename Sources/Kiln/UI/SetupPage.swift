@@ -151,11 +151,9 @@ struct PerformanceSettings: View {
         Card(T("Java 虚拟机", "Java virtual machine")) {
             SettingRow(title: T("垃圾回收器", "Garbage collector"),
                        help: T("G1 适合大多数情况；分代 ZGC 停顿更短，但占用更多内存（需要 Java 21+）。", "G1 suits most setups; generational ZGC has shorter pauses but uses more memory (Java 21+).")) {
-                Picker("", selection: $s.gcMode) {
-                    Text(T("G1（推荐）", "G1 (recommended)")).tag(LauncherSettings.GCMode.g1)
-                    Text(T("分代 ZGC", "Generational ZGC")).tag(LauncherSettings.GCMode.zgc)
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 260)
+                Segmented(items: [(LauncherSettings.GCMode.g1, T("G1（推荐）", "G1 (recommended)")),
+                                  (LauncherSettings.GCMode.zgc, T("分代 ZGC", "Generational ZGC"))],
+                          selection: $s.gcMode).frame(width: 340)
             }
             SettingRow(title: T("类数据共享（CDS）", "Class data sharing (CDS)"),
                        help: T("Java 19+ 会为每个版本生成类缓存，之后启动更快。", "With Java 19+, a per-instance class archive is created so later launches start faster.")) {
@@ -277,10 +275,7 @@ struct LanguageSettings: View {
     @PState private var s = LauncherSettings.shared
     var body: some View {
         Card(T("语言", "Language")) {
-            Picker("", selection: $s.language) {
-                ForEach(AppLanguage.allCases) { Text($0.displayName).tag($0) }
-            }
-            .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 360)
+            Segmented(items: AppLanguage.allCases.map { ($0, $0.displayName) }, selection: $s.language).frame(width: 360)
             Text(T("繁体中文由简体中文自动转换生成。", "Traditional Chinese is converted automatically from Simplified Chinese."))
                 .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
         }

@@ -50,12 +50,9 @@ struct DownloadGamePage: View {
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(spacing: 10) {
-                HStack {
-                    Picker("", selection: $kind) {
-                        ForEach(McVersionKind.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented).labelsHidden()
-                    TextField(T("搜索", "Search"), text: $search).textFieldStyle(.roundedBorder).frame(width: 150)
+                HStack(spacing: 10) {
+                    Segmented(items: McVersionKind.allCases.map { ($0, $0.title) }, selection: $kind)
+                    SearchField(placeholder: T("搜索", "Search"), text: $search).frame(width: 180)
                 }
                 PageScroll {
                     LazyVStack(spacing: 2) {
@@ -166,10 +163,7 @@ struct InstallPanel: View {
                 }
             }
             Text(T("Mod 加载器", "Mod loader")).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text2)
-            Picker("", selection: $loader) {
-                ForEach(Loader.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented).labelsHidden()
+            Segmented(items: Loader.allCases.map { ($0, $0.title) }, selection: $loader)
             if loader != .none {
                 if loadingLoader {
                     ProgressView().controlSize(.small)
@@ -393,50 +387,51 @@ struct ResourceSearchPage: View {
 
     private var instance: McInstance? { state.instances.first { $0.name == target } }
 
+    private static let filterWidth: CGFloat = 88
+
+    private func filterLabel(_ text: String) -> some View {
+        Text(text).font(.system(size: 12)).foregroundStyle(Theme.text2)
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 10) {
-                HStack {
-                    Image(systemName: "magnifyingglass").foregroundStyle(Theme.text3)
-                    TextField(T("搜索\(type.title)", "Search \(type.title)"), text: $query)
-                        .textFieldStyle(.plain)
-                        .onSubmit { runSearch() }
-                }
-                .padding(.horizontal, 12).frame(height: 34)
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.stroke))
+                SearchField(placeholder: T("搜索\(type.title)", "Search \(type.title)"), text: $query) { runSearch() }
                 Picker(T("安装到", "Install to"), selection: $target) {
                     Text(T("不限版本（另存为文件）", "Any version (save as file)")).tag("")
                     ForEach(state.instances.filter { $0.category != .error }) { Text($0.name).tag($0.name) }
                 }
                 .frame(width: 240)
             }
-            HStack(spacing: 10) {
-                Picker("", selection: $source) {
-                    Text(T("全部来源", "All sources")).tag("")
-                    Text("Modrinth").tag(Modrinth.Source.modrinth.rawValue)
-                    Text("CurseForge").tag(Modrinth.Source.curseforge.rawValue)
+            // 筛选：标签一列、各段等宽，上下两行的分段对齐
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                GridRow {
+                    filterLabel(T("来源", "Source"))
+                    Segmented(items: [("", T("全部", "All")),
+                                      (Modrinth.Source.modrinth.rawValue, "Modrinth"),
+                                      (Modrinth.Source.curseforge.rawValue, "CurseForge")],
+                              selection: $source, segmentWidth: Self.filterWidth)
+                    Color.clear.frame(height: 1).gridCellUnsizedAxes(.vertical)
                 }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
-                Spacer()
-            }
-            if type == .mod {
-                HStack(spacing: 10) {
-                    Picker("", selection: $loader) {
-                        Text(T("全部加载器", "All loaders")).tag("")
-                        ForEach(["Fabric", "Forge", "NeoForge", "Quilt"], id: \.self) { Text($0).tag($0) }
+                if type == .mod {
+                    GridRow {
+                        filterLabel(T("加载器", "Loader"))
+                        Segmented(items: [("", T("全部", "All"))] + ["Fabric", "Forge", "NeoForge", "Quilt"].map { ($0, $0) },
+                                  selection: $loader, segmentWidth: Self.filterWidth)
+                        Group {
+                            if loader == "Quilt" {
+                                Text(T("包含可在 Quilt 上运行的 Fabric Mod", "Includes Fabric mods, which run on Quilt"))
+                                    .foregroundStyle(Theme.text3)
+                            } else if let i = instance, let own = instanceLoader(i), !loader.isEmpty, own != loader {
+                                Text(T("与所选版本的加载器（\(own)）不同", "Differs from the selected instance's loader (\(own))"))
+                                    .foregroundStyle(Theme.yellow)
+                            }
+                        }
+                        .font(.system(size: 11.5)).lineLimit(1)
                     }
-                    .pickerStyle(.segmented).labelsHidden().fixedSize()
-                    if loader == "Quilt" {
-                        Text(T("包含可在 Quilt 上运行的 Fabric Mod", "Includes Fabric mods, which run on Quilt"))
-                            .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
-                    } else if let i = instance, let own = instanceLoader(i), !loader.isEmpty, own != loader {
-                        Text(T("与所选版本的加载器（\(own)）不同", "Differs from the selected instance's loader (\(own))"))
-                            .font(.system(size: 11.5)).foregroundStyle(Theme.yellow)
-                    }
-                    Spacer()
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             PageScroll {
                 LazyVStack(spacing: 0) {
                     if loading && results.isEmpty { ProgressView().padding(40) }

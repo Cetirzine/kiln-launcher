@@ -17,13 +17,7 @@ struct InstancesPage: View {
                 Button(T("安装新版本", "Install a version")) { state.page = .download; state.downloadSection = .game }
                     .buttonStyle(.kiln)
             }
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.text3)
-                TextField(T("按名称筛选", "Filter by name"), text: $search).textFieldStyle(.plain).font(.system(size: 13))
-            }
-            .padding(.horizontal, 10).frame(height: 30)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.stroke))
+            SearchField(placeholder: T("按名称筛选", "Filter by name"), text: $search)
             .padding(.horizontal, 28).padding(.bottom, 14)
 
             columnHeader
@@ -379,7 +373,7 @@ struct ModManager: View {
             if !instance.isModded {
                 Text(T("该版本没有安装 Mod 加载器，Mod 不会生效。", "This instance has no mod loader, so mods won't load.")).font(.system(size: 12)).foregroundStyle(Theme.yellow)
             }
-            TextField(T("搜索", "Search"), text: $search).textFieldStyle(.roundedBorder)
+            SearchField(placeholder: T("搜索", "Search"), text: $search)
             if files.isEmpty {
                 Text(T("还没有安装 Mod", "No mods installed")).font(.system(size: 12)).foregroundStyle(Theme.text3).padding(.vertical, 8)
             }
@@ -488,7 +482,7 @@ struct GameLogPage: View {
     var body: some View {
         VStack(spacing: 0) {
             PageHeader(T("游戏日志", "Game log"), subtitle: game.instanceName, back: { state.subPage = nil }) {
-                TextField(T("搜索", "Search"), text: $filter).textFieldStyle(.roundedBorder).frame(width: 160)
+                SearchField(placeholder: T("搜索", "Search"), text: $filter).frame(width: 180)
                 Toggle(T("自动滚动", "Auto scroll"), isOn: $follow).toggleStyle(.checkbox)
                 IconButton(systemImage: "doc.on.doc", help: T("复制", "Copy")) {
                     NSPasteboard.general.clearContents()

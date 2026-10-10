@@ -25,7 +25,7 @@ package enum McVersionKind: String, CaseIterable, Sendable {
         switch self {
         case .release: return T("正式版", "Release")
         case .snapshot: return T("快照", "Snapshot")
-        case .old: return T("远古版", "Old Alpha/Beta")
+        case .old: return T("远古版", "Alpha/Beta")
         case .aprilFool: return T("愚人节版", "April Fools")
         }
     }
