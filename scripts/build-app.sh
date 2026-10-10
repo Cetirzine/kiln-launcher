@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${VERSION:-0.2.2}"
+VERSION="${VERSION:-0.2.3}"
 ARCH="${ARCH:-arm64}"            # 需要同时支持 Intel 时可设为 "arm64 x86_64"
 APP="build/Kiln.app"
 
