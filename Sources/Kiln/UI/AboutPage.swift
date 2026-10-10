@@ -23,18 +23,20 @@ struct AboutPage: View {
                                     .padding(.top, 2)
                             }
                             Spacer()
-                            Button("GitHub") { Links.open(Links.repository) }.buttonStyle(.kiln)
+                            LinkButton(title: "GitHub", url: Links.repository)
+                                // 与下方列表项的按钮右侧对齐
+                                .padding(.trailing, 10)
                         }
                     }
                     Card(T("署名", "Attribution")) {
                         ListItem(systemIcon: "person.fill", title: T("龙腾猫跃", "LTCat (龙腾猫跃)"),
                                  info: T("Plain Craft Launcher 2（PCL2）的作者。本启动器的部分思路受 PCL2 启发。",
                                          "Author of Plain Craft Launcher 2 (PCL2). Some ideas in this launcher were inspired by PCL2.")) {
-                            Button(T("主页", "Homepage")) { Links.open(Links.pcl2Author) }.buttonStyle(.kiln)
+                            LinkButton(title: T("主页", "Homepage"), url: Links.pcl2Author)
                         }
                         ListItem(systemIcon: "cube.fill", title: "Plain Craft Launcher 2",
                                  info: T("一款出色的 Minecraft 启动器。", "An excellent Minecraft launcher.")) {
-                            Button("GitHub") { Links.open(Links.pcl2) }.buttonStyle(.kiln)
+                            LinkButton(title: "GitHub", url: Links.pcl2)
                         }
                         Text(T("\(AppInfo.shortName) 是独立开发的项目，与 PCL 及其作者没有关联，也未获得其认可。请勿向 PCL 反馈本软件的问题。",
                                "\(AppInfo.shortName) is an independent project. It is not affiliated with or endorsed by PCL or its author. Please don't report issues with this software to PCL."))
@@ -43,21 +45,21 @@ struct AboutPage: View {
                     Card(T("致谢", "Thanks")) {
                         ListItem(systemIcon: "shippingbox.fill", title: "HMCL",
                                  info: T("Forge / NeoForge 安装流程与崩溃分析的实现思路参考了 HMCL。", "The Forge / NeoForge install flow and crash analysis follow approaches used by HMCL.")) {
-                            Button("GitHub") { Links.open(Links.hmcl) }.buttonStyle(.kiln)
+                            LinkButton(title: "GitHub", url: Links.hmcl)
                         }
                         ListItem(systemIcon: "bolt.fill", title: "MetalUniversal",
                                  info: T("为 Apple 芯片提供实验性的 Metal 渲染后端。", "An experimental Metal rendering backend for Apple Silicon.")) {
-                            Button("GitHub") { Links.open(Links.metalUniversal) }.buttonStyle(.kiln)
+                            LinkButton(title: "GitHub", url: Links.metalUniversal)
                         }
                         ListItem(systemIcon: "server.rack", title: "BMCLAPI (bangbang93)",
                                  info: T("提供 Minecraft 镜像下载源。", "Provides the Minecraft download mirror.")) {
-                            Button(T("网站", "Website")) { Links.open(Links.bmclapi) }.buttonStyle(.kiln)
+                            LinkButton(title: T("网站", "Website"), url: Links.bmclapi)
                         }
                         ListItem(systemIcon: "magnifyingglass", title: "Modrinth",
                                  info: T("Mod、资源包与光影的搜索与下载。", "Search and downloads for mods, resource packs and shaders."))
                         ListItem(systemIcon: "flame", title: "CurseForge 与 MCIM（z0z0r4）",
                                  info: T("CurseForge 上的 Mod 与资源；MCIM 提供了无需密钥的社区镜像。", "Mods and resources on CurseForge; MCIM provides a community mirror that needs no API key.")) {
-                            Button("MCIM") { Links.open("https://mod.mcimirror.top") }.buttonStyle(.kiln)
+                            LinkButton(title: "MCIM", url: "https://mod.mcimirror.top")
                         }
                         Text(T("界面布局参考了 Lunar Client。", "The layout is inspired by Lunar Client."))
                             .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
@@ -72,5 +74,17 @@ struct AboutPage: View {
                 .padding(.horizontal, 24).padding(.bottom, 24)
             }
         }
+    }
+}
+
+/// 外部链接按钮：统一宽度，一列按钮左右对齐
+private struct LinkButton: View {
+    let title: String
+    let url: String
+    var body: some View {
+        Button { Links.open(url) } label: {
+            Text(title).lineLimit(1).frame(width: 76)
+        }
+        .buttonStyle(.kiln)
     }
 }
