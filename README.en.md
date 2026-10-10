@@ -13,6 +13,7 @@ A native macOS launcher for Minecraft: Java Edition, built with SwiftUI and tune
 - Signs in with a Microsoft account (OAuth 2.0 device code flow) or an offline profile for offline/LAN play
 - Searches and downloads mods, resource packs and shaders from Modrinth, with mods filtered by loader (Fabric, Forge, NeoForge, Quilt)
 - Shows game logs and explains common crash causes
+- Checks for new versions and, once you confirm, downloads, verifies and replaces itself
 
 ## Apple silicon
 

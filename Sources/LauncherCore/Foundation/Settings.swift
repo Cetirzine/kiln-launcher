@@ -49,6 +49,8 @@ package final class LauncherSettings {
     package var gameLanguageAuto: Bool { didSet { d.set(gameLanguageAuto, forKey: "gameLanguageAuto") } }
 
     package var msClientId: String { didSet { d.set(msClientId, forKey: "msClientId") } }
+    package var autoCheckUpdates: Bool { didSet { d.set(autoCheckUpdates, forKey: "autoCheckUpdates") } }
+    package var lastUpdateCheck: Date? { didSet { d.set(lastUpdateCheck, forKey: "lastUpdateCheck") } }
     package var debugLog: Bool { didSet { d.set(debugLog, forKey: "debugLog") } }
 
     private init() {
@@ -93,6 +95,8 @@ package final class LauncherSettings {
         downloadThreads = max(1, min(256, d.integer(forKey: "downloadThreads")))
         gameLanguageAuto = d.bool(forKey: "gameLanguageAuto")
         msClientId = d.string(forKey: "msClientId") ?? ""
+        autoCheckUpdates = d.object(forKey: "autoCheckUpdates") as? Bool ?? true
+        lastUpdateCheck = d.object(forKey: "lastUpdateCheck") as? Date
         debugLog = d.bool(forKey: "debugLog") || ProcessInfo.processInfo.environment["KILN_DEBUG"] != nil
         Localizer.shared.language = language
     }

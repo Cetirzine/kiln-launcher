@@ -294,6 +294,15 @@ struct SystemSettings: View {
                           text: $s.msClientId).textFieldStyle(.roundedBorder).frame(maxWidth: 340)
             }
         }
+        Card(T("更新", "Updates")) {
+            SettingRow(title: T("自动检查更新", "Check for updates automatically"),
+                       help: T("当前版本 \(AppInfo.version)。有新版本时会提示，确认后自动下载并替换。", "Current version \(AppInfo.version). When a new version is out you'll be asked, then it downloads and replaces itself.")) {
+                Toggle("", isOn: $s.autoCheckUpdates).toggleStyle(.switch).labelsHidden()
+                Button(T("立即检查", "Check now")) { Task { await AppState.shared.checkForUpdates(userInitiated: true) } }
+                    .buttonStyle(.kiln)
+                    .disabled(AppState.shared.checkingForUpdates)
+            }
+        }
         Card(T("数据与日志", "Data & logs")) {
             HStack(spacing: 8) {
                 Button(T("打开日志文件夹", "Open log folder")) { NSWorkspace.shared.open(Paths.logs) }.buttonStyle(.kiln)

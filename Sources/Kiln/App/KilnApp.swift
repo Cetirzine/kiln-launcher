@@ -23,6 +23,9 @@ struct KilnApp: App {
                     state.subPage = nil
                 }
             }
+            CommandGroup(after: .appInfo) {
+                Button(T("检查更新…", "Check for Updates…")) { Task { await state.checkForUpdates(userInitiated: true) } }
+            }
             CommandGroup(replacing: .newItem) {}
             CommandMenu(T("游戏", "Game")) {
                 Button(T("开始游戏", "Play")) { state.launchSelected() }
@@ -47,6 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("[Start] \(AppInfo.shortName) \(AppInfo.version)，macOS \(RuleContext.osVersion)，\(Arch.native)，内存 \(ProcessInfo.processInfo.physicalMemory / 1024 / 1024 / 1024) GB")
         NSWindow.allowsAutomaticWindowTabbing = false
+        // 启动后在后台检查更新
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            await AppState.shared.checkForUpdates(userInitiated: false)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -183,6 +191,78 @@ final class AppState {
     }
 
     func cancelLaunch() { launchJob?.cancel() }
+
+    // MARK: 自动更新
+
+    var checkingForUpdates = false
+
+    /// 检查新版本。自动检查时遵循设置，并且最多每 6 小时检查一次
+    func checkForUpdates(userInitiated: Bool) async {
+        let settings = LauncherSettings.shared
+        if !userInitiated {
+            guard settings.autoCheckUpdates else { return }
+            if let last = settings.lastUpdateCheck, Date().timeIntervalSince(last) < 6 * 3600 { return }
+        }
+        guard !checkingForUpdates else { return }
+        checkingForUpdates = true
+        defer { checkingForUpdates = false }
+        do {
+            let release = try await Updater.check()
+            settings.lastUpdateCheck = Date()
+            guard let release else {
+                if userInitiated { Hint.show(T("已是最新版本（\(AppInfo.version)）", "You're up to date (\(AppInfo.version))"), .green) }
+                return
+            }
+            let notes = Self.plainNotes(release.notes)
+            let r = await MsgBox.show(
+                title: T("发现新版本 \(release.version)", "Kiln \(release.version) is available"),
+                content: T("当前版本 \(AppInfo.version)。", "You have \(AppInfo.version).") + (notes.isEmpty ? "" : "\n\n" + notes),
+                buttons: [T("立即更新", "Update now"), T("查看发布页", "View release"), T("稍后", "Later")])
+            switch r {
+            case 1: performUpdate(release)
+            case 2: Links.open(release.pageURL)
+            default: break
+            }
+        } catch {
+            log("[Update] 检查更新失败：\(error.friendly)")
+            if userInitiated { Hint.show(T("检查更新失败：\(error.friendly)", "Couldn't check for updates: \(error.friendly)"), .red) }
+        }
+    }
+
+    /// 下载、校验并替换为新版本，然后重新打开
+    func performUpdate(_ release: Updater.Release) {
+        guard let app = Updater.currentApp else {
+            Hint.show(Updater.UpdateError.notInstalledAsApp.localizedDescription, .red)
+            Links.open(release.pageURL)
+            return
+        }
+        do { try Updater.checkReplaceable(app) } catch {
+            Hint.show(error.friendly, .red)
+            return
+        }
+        if games.contains(where: { $0.state == .running || $0.state == .starting }) {
+            Hint.show(T("请先退出正在运行的游戏，再更新启动器。", "Quit the running game before updating the launcher."), .red)
+            return
+        }
+        JobCenter.shared.start(T("更新到 Kiln \(release.version)", "Update to Kiln \(release.version)")) { job in
+            job.enter(T("下载新版本", "Downloading the update"), index: 0, of: 2)
+            let staged = try await Updater.prepare(release, replacing: app, job: job)
+            job.enter(T("安装并重新打开", "Installing and relaunching"), index: 1, of: 2)
+            try Updater.launchReplacement(staged: staged, app: app)
+            NSApp.terminate(nil)
+        }
+    }
+
+    /// 发布说明转为纯文本：去掉 Markdown 标记，只取中文部分（分隔线之前），并限制长度
+    static func plainNotes(_ md: String) -> String {
+        var text = md.components(separatedBy: "\n---").first ?? md
+        text = text.replacingOccurrences(of: #"\*\*([^*]+)\*\*"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"(?m)^#+\s*"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\[([^\]]+)\]\([^)]+\)"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: "`", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.count > 700 ? String(text.prefix(700)) + "…" : text
+    }
 
     // MARK: 游戏进程事件
 

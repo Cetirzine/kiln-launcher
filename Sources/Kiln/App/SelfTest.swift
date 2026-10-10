@@ -47,6 +47,10 @@ enum SelfTest {
         }
         let crash = CrashAnalyzer.analyze(["Exception in thread \"main\" java.lang.UnsupportedClassVersionError: foo"])
         expect(crash != nil, "崩溃分析：Java 版本")
+        expect(Updater.isNewer("0.2.10", than: "0.2.9") && !Updater.isNewer("0.2.1", than: "0.2.1") && Updater.isNewer("1.0", than: "0.9.9"),
+               "更新：版本号比较")
+        expect(AppState.plainNotes("## 更新内容\n\n- **下载更快**：见 [这里](https://x)\n\n---\n\nEnglish") == "更新内容\n\n- 下载更快：见 这里",
+               "更新：发布说明转纯文本")
         // 文件监视：版本目录的变化会触发刷新，资源文件的变化被忽略
         expect(FolderWatcher.isRelevant("/mc/versions/1.21/1.21.json") && FolderWatcher.isRelevant("/mc/versions/1.21/mods/a.jar")
                && !FolderWatcher.isRelevant("/mc/assets/objects/ab/abcd") && !FolderWatcher.isRelevant("/mc/versions/1.21/1.21-natives/x.dylib"),
