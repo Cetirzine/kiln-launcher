@@ -55,7 +55,7 @@ package final class LauncherSettings {
         d.register(defaults: [
             "memoryAuto": true, "memoryGB": 4.0, "windowMode": 1, "windowWidth": 854, "windowHeight": 480,
             "visibility": 4, "isolation": 1, "customInfo": AppInfo.shortName,
-            "versionListSource": 1, "fileSource": 1, "downloadThreads": 32, "gameLanguageAuto": true,
+            "versionListSource": 0, "fileSource": 0, "downloadThreads": 32, "gameLanguageAuto": true,
             "gcMode": 0, "classDataSharing": true, "compactHeaders": true, "fastVerify": true, "arm64Native": true,
         ])
         language = AppLanguage(rawValue: d.string(forKey: "language") ?? "") ?? .system
@@ -80,8 +80,9 @@ package final class LauncherSettings {
         compactHeaders = d.bool(forKey: "compactHeaders")
         fastVerify = d.bool(forKey: "fastVerify")
         arm64Native = d.bool(forKey: "arm64Native")
-        versionListSource = DownloadSource(rawValue: d.integer(forKey: "versionListSource")) ?? .officialSlowFallback
-        fileSource = DownloadSource(rawValue: d.integer(forKey: "fileSource")) ?? .officialSlowFallback
+        // 默认优先使用镜像源（BMCLAPI），官方源作为备用
+        versionListSource = DownloadSource(rawValue: d.integer(forKey: "versionListSource")) ?? .mirrorFirst
+        fileSource = DownloadSource(rawValue: d.integer(forKey: "fileSource")) ?? .mirrorFirst
         downloadThreads = max(1, min(256, d.integer(forKey: "downloadThreads")))
         gameLanguageAuto = d.bool(forKey: "gameLanguageAuto")
         msClientId = d.string(forKey: "msClientId") ?? ""

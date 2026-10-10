@@ -26,6 +26,8 @@ Rosetta 2 is only used as a fallback.
 
 Performance work includes tuned G1 settings, the Java 25 AOT cache (Java 19–24: dynamic CDS), compact object headers on Java 24+, skipping SHA-1 checks for unchanged files, and running the game at a high QoS so it is scheduled on performance cores. On supported versions, the experimental [MetalUniversal](https://github.com/EternityQwQ/MetalUniversal) renderer can be enabled with one switch.
 
+Downloads use the BMCLAPI mirror by default and fall back to the official servers; failed files are retried with lower concurrency, which helps behind proxies.
+
 ## Microsoft sign-in and privacy
 
 - Public client, device code flow against the `consumers` endpoint, scopes `XboxLive.signin offline_access`

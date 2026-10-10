@@ -110,6 +110,12 @@ package enum Net {
         }
     }
 
+    /// 系统是否设置了 HTTP / HTTPS 代理
+    package static var systemProxyEnabled: Bool {
+        guard let settings = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] else { return false }
+        return (settings["HTTPSEnable"] as? Int) == 1 || (settings["HTTPEnable"] as? Int) == 1
+    }
+
     /// 连接中断、超时等可以重试的网络错误
     package static func isTransient(_ error: Error) -> Bool {
         let ns = error as NSError
@@ -343,23 +349,52 @@ package enum Downloader {
         }
         defer { monitor.cancel() }
 
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            var iterator = todo.makeIterator()
-            for _ in 0..<min(max(1, threads), todo.count) {
-                if let item = iterator.next() { group.addTask { try await fetch(item, counter: counter) } }
-            }
-            while try await group.next() != nil {
-                if let item = iterator.next() { group.addTask { try await fetch(item, counter: counter) } }
-            }
+        // 第一轮：按设置的并发数下载；个别文件失败时先记下，不立即让整个任务失败
+        // 经过系统代理时，过多的并发连接容易在代理处排队超时
+        let firstThreads = Net.systemProxyEnabled ? min(threads, 16) : threads
+        var failed = try await pass(todo, threads: firstThreads, attempts: nil, counter: counter)
+        // 第二轮：网络拥塞（例如经过本地代理）时，降低并发、增加重试次数再试一次
+        if !failed.isEmpty {
+            log("[Download] \(failed.count) 个文件下载失败，降低并发后重试")
+            failed = try await pass(failed.map(\.0), threads: 4, attempts: 6, counter: counter)
+        }
+        if let (item, error) = failed.first {
+            throw LauncherError(T("下载 \(item.destination.lastPathComponent) 失败：\(error.friendly)（共 \(failed.count) 个文件未能下载，请检查网络或在设置中切换下载源）",
+                                  "Failed to download \(item.destination.lastPathComponent): \(error.friendly) (\(failed.count) file(s) couldn't be downloaded; check your connection or switch the download source in Settings)"))
         }
         await MainActor.run { job?.fileFraction = 1; job?.speed = 0 }
     }
 
-    package static func fetch(_ item: DownloadItem, counter: DownloadCounter? = nil) async throws {
+    /// 并发下载一组文件，返回失败的文件与错误；取消时抛出
+    private static func pass(_ items: [DownloadItem], threads: Int, attempts: Int?,
+                             counter: DownloadCounter) async throws -> [(DownloadItem, Error)] {
+        try await withThrowingTaskGroup(of: (DownloadItem, Error)?.self) { group in
+            func add(_ item: DownloadItem) {
+                group.addTask {
+                    do { try await fetch(item, counter: counter, attempts: attempts); return nil }
+                    catch is CancellationError { throw CancellationError() }
+                    catch { return (item, error) }
+                }
+            }
+            var iterator = items.makeIterator()
+            for _ in 0..<min(max(1, threads), items.count) { if let item = iterator.next() { add(item) } }
+            var failed: [(DownloadItem, Error)] = []
+            while let result = try await group.next() {
+                if let result { failed.append(result) }
+                if let item = iterator.next() { add(item) }
+            }
+            return failed
+        }
+    }
+
+    package static func fetch(_ item: DownloadItem, counter: DownloadCounter? = nil, attempts: Int? = nil) async throws {
         var lastError: Error = LauncherError("No URL for \(item.destination.lastPathComponent)")
         let fm = FileManager.default
-        for attempt in 0..<(item.urls.count * 2) {
+        let total = attempts ?? max(4, item.urls.count * 2)
+        for attempt in 0..<total {
             try Task.checkCancellation()
+            // 重试前稍作等待，逐次加长
+            if attempt > 0 { try await Task.sleep(nanoseconds: UInt64(min(attempt, 4)) * 700_000_000) }
             let u = item.urls[attempt % item.urls.count]
             guard let url = URL(string: u) else { continue }
             if LauncherSettings.shared.debugLog { log("[Download] 开始 \(u)") }
