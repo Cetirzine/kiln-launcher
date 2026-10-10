@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" width="128" alt="Kiln Launcher">
+
 # Kiln Launcher
 
 A native macOS launcher for Minecraft: Java Edition, built with SwiftUI and tuned for Apple silicon.
@@ -43,7 +45,7 @@ This produces `build/Kiln.app` (arm64, release build).
 
 ## Credits
 
-- Inspired in part by [Plain Craft Launcher 2](https://github.com/Meloong-Git/PCL) by LTCat (龙腾猫跃). Kiln is an independent project and is not affiliated with or endorsed by PCL or its author.
+- LTCat (龙腾猫跃) and [Plain Craft Launcher 2](https://github.com/Meloong-Git/PCL)
 - [HMCL](https://github.com/HMCL-dev/HMCL), [MetalUniversal](https://github.com/EternityQwQ/MetalUniversal), [MinecraftMachina/lwjgl](https://github.com/MinecraftMachina/lwjgl), [BMCLAPI](https://bmclapi.bangbang93.com), [Modrinth](https://modrinth.com), [Azul Zulu](https://www.azul.com/downloads/)
 
 Minecraft is a trademark of Mojang Studios. This project is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.

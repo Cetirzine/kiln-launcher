@@ -1,11 +1,10 @@
+<img src="assets/logo.svg" width="128" alt="Kiln">
+
 # Kiln
 
 [English](README.en.md)
 
 为 Mac 与 Apple 芯片打造的 Minecraft: Java Edition 启动器，SwiftUI 原生实现。
-
-> 本项目的部分思路受 [Plain Craft Launcher 2](https://github.com/Meloong-Git/PCL)（作者：龙腾猫跃）启发。
-> Kiln 是独立开发的项目，与 PCL 及其作者没有关联，也未获得其认可。
 
 ## 特点
 

@@ -28,8 +28,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Kiln"
 
 # 图标
-ICONSET="$(mktemp -d)/Kiln.iconset"
-swift scripts/make-icon.swift "$ICONSET"
+TOOLS="$(mktemp -d)"
+ICONSET="$TOOLS/Kiln.iconset"
+swiftc -O scripts/make-icon/main.swift Sources/Kiln/UI/LogoMark.swift -o "$TOOLS/make-icon"
+"$TOOLS/make-icon" "$ICONSET" assets/logo.png
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/Kiln.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST

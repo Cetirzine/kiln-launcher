@@ -125,10 +125,10 @@ struct SidebarButton: View {
     }
 }
 
-/// 标志：一块正在烧制的方块
+/// 标志：黑色圆角方块上的白色镐子
 struct Logo: View {
     var body: some View {
-        BlockIcon(kind: "Kiln").frame(width: 30, height: 30)
+        LogoMark().frame(width: 30, height: 30)
     }
 }
 

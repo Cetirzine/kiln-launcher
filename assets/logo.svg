@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Kiln Launcher</title>
+  <defs>
+    <linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="120" y1="100" x2="900" y2="924">
+      <stop offset="0" stop-color="#30343D"/><stop offset="0.5" stop-color="#111216"/><stop offset="1" stop-color="#030304"/>
+    </linearGradient>
+    <radialGradient id="glow" gradientUnits="userSpaceOnUse" cx="587.5" cy="436.5" r="470">
+      <stop offset="0" stop-color="#46D9E6" stop-opacity="0.34"/><stop offset="1" stop-color="#46D9E6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" gradientUnits="userSpaceOnUse" x1="100" y1="100" x2="924" y2="924">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.22"/><stop offset="1" stop-color="#fff" stop-opacity="0.02"/>
+    </linearGradient>
+    <!-- 以下渐变使用镐子的局部坐标 -->
+    <linearGradient id="head" gradientUnits="userSpaceOnUse" x1="-315" y1="-230" x2="315" y2="-120">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="0.45" stop-color="#D6FAFC"/><stop offset="1" stop-color="#56D3E0"/>
+    </linearGradient>
+    <linearGradient id="handle" gradientUnits="userSpaceOnUse" x1="-35" y1="0" x2="35" y2="0">
+      <stop offset="0" stop-color="#F4F5F7"/><stop offset="0.5" stop-color="#B9BCC2"/><stop offset="1" stop-color="#8A8D93"/>
+    </linearGradient>
+    <linearGradient id="collar" gradientUnits="userSpaceOnUse" x1="0" y1="-196" x2="0" y2="-150">
+      <stop offset="0" stop-color="#E3E6EA"/><stop offset="1" stop-color="#7C8087"/>
+    </linearGradient>
+    <clipPath id="headClip"><path id="headShape" d="M -315 -152.7 A 430 430 0 0 1 315 -152.7 A 1348.8 1348.8 0 0 0 -315 -152.7 Z"/></clipPath>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="22" stdDeviation="13" flood-color="#000" flood-opacity="0.6"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#glow)"/>
+  <g filter="url(#shadow)">
+    <g transform="translate(512 512) scale(1.06) translate(-49 49) rotate(45)">
+      <path d="M -35 -200 L 35 -200 L 35 295 A 35 35 0 0 1 -35 295 Z" fill="url(#handle)"/>
+      <rect x="-48" y="-196" width="96" height="46" rx="12" fill="url(#collar)"/>
+      <use href="#headShape" fill="url(#head)"/>
+      <use href="#headShape" fill="none" stroke="#fff" stroke-opacity="0.9" stroke-width="20" clip-path="url(#headClip)"/>
+    </g>
+  </g>
+  <rect x="102" y="102" width="820" height="820" rx="183" fill="none" stroke="url(#rim)" stroke-width="3"/>
+</svg>
