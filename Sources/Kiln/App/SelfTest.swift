@@ -55,6 +55,12 @@ enum SelfTest {
         expect(FolderWatcher.isRelevant("/mc/versions/1.21/1.21.json") && FolderWatcher.isRelevant("/mc/versions/1.21/mods/a.jar")
                && !FolderWatcher.isRelevant("/mc/assets/objects/ab/abcd") && !FolderWatcher.isRelevant("/mc/versions/1.21/1.21-natives/x.dylib"),
                "文件监视的路径过滤")
+        // 账号：旧版本保存的数据（没有 needsLogin / account 字段）仍能读取
+        let oldAccount = try? JSONDecoder().decode(Account.self, from: Data(#"{"kind":"offline","name":"Steve","uuid":"abc"}"#.utf8))
+        expect(oldAccount?.name == "Steve" && oldAccount?.needsLogin == nil, "旧账号数据兼容")
+        let oldSetup = try? JSONDecoder().decode(LauncherSettings.InstanceSetup.self, from: Data(#"{"icon":"stone"}"#.utf8))
+        expect(oldSetup?.icon == "stone" && oldSetup?.account == nil, "旧版本设置兼容（无固定账号）")
+        expect(Account.offlineUUID("Steve") != Account.offlineUUID("Alex"), "离线账号改名后 UUID 随之改变")
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("kiln-watch-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: tmp.appendingPathComponent("versions"), withIntermediateDirectories: true)
         var fired = 0

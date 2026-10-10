@@ -412,6 +412,8 @@ struct ModManager: View {
 /// 版本独立设置
 struct InstanceSettingsForm: View {
     let instance: McInstance
+    @Environment(AppState.self) private var state
+    @PState private var store = AccountStore.shared
     @PState private var setup = LauncherSettings.InstanceSetup()
     @PState private var javas: [JavaInfo] = []
     @PState private var loaded = false
@@ -423,6 +425,15 @@ struct InstanceSettingsForm: View {
                            help: T("存档、Mod、资源包与设置保存在版本文件夹中", "Worlds, mods, resource packs and options are kept inside the instance folder")) {
                     Toggle("", isOn: Binding(get: { setup.isolation ?? instance.isolated }, set: { setup.isolation = $0 }))
                         .toggleStyle(.switch).labelsHidden()
+                }
+                SettingRow(title: T("账号", "Account"),
+                           help: T("固定后，启动该版本时总是使用这个账号，不受右上角切换影响", "When pinned, this instance always launches with this account, whatever is selected in the top-right corner")) {
+                    Picker("", selection: Binding(get: { store.account(id: setup.account)?.id ?? "" },
+                                                  set: { setup.account = $0.isEmpty ? nil : $0 })) {
+                        Text(T("使用当前账号", "Use the current account")).tag("")
+                        ForEach(store.accounts) { Text("\($0.name)（\($0.typeText)）").tag($0.id) }
+                    }
+                    .labelsHidden().frame(maxWidth: 320)
                 }
                 SettingRow(title: "Java") {
                     Picker("", selection: Binding(get: { setup.javaPath ?? "" }, set: { setup.javaPath = $0.isEmpty ? nil : $0 })) {
@@ -460,7 +471,15 @@ struct InstanceSettingsForm: View {
             Task { javas = await JavaManager.search() }
         }
         .onChange(of: setup) { _, new in
-            if loaded { LauncherSettings.shared.saveInstanceSetup(new, instance.dir) }
+            if loaded {
+                LauncherSettings.shared.saveInstanceSetup(new, instance.dir)
+                state.pinRevision += 1
+            }
+        }
+        // 在右上角账号菜单中固定 / 取消固定时同步
+        .onChange(of: state.pinRevision) { _, _ in
+            let current = instance.setup.account
+            if setup.account != current { setup.account = current }
         }
     }
 

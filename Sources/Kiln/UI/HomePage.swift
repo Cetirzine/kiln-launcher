@@ -277,19 +277,30 @@ struct PlayButton: View {
 
 // MARK: - 账号
 
-/// 账号按钮（放在主图上时使用浅色文字）
+/// 账号按钮（放在主图上时使用浅色文字）：显示选中版本启动时使用的账号
 struct AccountChip: View {
     var onImage = false
+    @Environment(AppState.self) private var state
     @PState private var store = AccountStore.shared
-    @PState private var show = false
     @PState private var hover = false
 
     var body: some View {
-        Button { show = true } label: {
+        @Bindable var state = state
+        let account = state.effectiveAccount
+        let pinned = state.pinnedAccount(state.selectedInstance) != nil
+        Button { state.showAccounts = true } label: {
             HStack(spacing: 8) {
-                Avatar(account: store.selected).frame(width: 22, height: 22)
-                Text(store.selected?.name ?? T("添加账号", "Add account"))
+                Avatar(account: account).frame(width: 22, height: 22)
+                Text(account?.name ?? T("添加账号", "Add account"))
                     .font(.system(size: 12.5, weight: .medium))
+                if pinned {
+                    Image(systemName: "pin.fill").font(.system(size: 9)).opacity(0.75)
+                        .help(T("该版本固定使用此账号", "This instance always uses this account"))
+                }
+                if account?.needsLogin == true {
+                    Rectangle().fill(Theme.red).frame(width: 6, height: 6)
+                        .help(T("需要重新登录", "Needs to sign in again"))
+                }
                 Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).opacity(0.7)
             }
             .foregroundStyle(onImage ? Color.white : Theme.text)
@@ -301,7 +312,9 @@ struct AccountChip: View {
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
-        .popover(isPresented: $show, arrowEdge: .bottom) { AccountPopover(show: $show) }
+        .popover(isPresented: $state.showAccounts, arrowEdge: .bottom) {
+            AccountPopover().environment(state)
+        }
     }
 }
 
@@ -330,24 +343,45 @@ struct Avatar: View {
     }
 }
 
+/// 账号列表：点击切换（类似 Lunar 的头像下拉），每个账号可改名、重新登录、固定给某个版本（类似 PCL 的版本登录要求）
 struct AccountPopover: View {
-    @Binding var show: Bool
+    @Environment(AppState.self) private var state
     @PState private var store = AccountStore.shared
     @PState private var offlineName = ""
     @PState private var msLogin = false
+    @PState private var renaming: String?
+    @PState private var newName = ""
 
     var body: some View {
+        let instance = state.selectedInstance
+        let pinned = state.pinnedAccount(instance)
         VStack(alignment: .leading, spacing: 10) {
             Text(T("账号", "Accounts")).font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.text)
-            if store.accounts.isEmpty {
-                Text(T("还没有账号，可添加离线账号或登录正版。", "No accounts yet. Add an offline account or sign in with Microsoft.")).font(.system(size: 12)).foregroundStyle(Theme.text2)
+            if let instance, let pinned {
+                HStack(spacing: 4) {
+                    Text(T("\(instance.name) 固定使用 \(pinned.name)", "\(instance.name) always uses \(pinned.name)"))
+                        .lineLimit(1).truncationMode(.middle)
+                    Button(T("取消固定", "Unpin")) { state.pin(nil, to: instance) }
+                        .buttonStyle(.plain).foregroundStyle(Theme.accent)
+                }
+                .font(.system(size: 11.5)).foregroundStyle(Theme.text2)
             }
-            ForEach(store.accounts) { acc in
-                ListItem(systemIcon: acc.kind == .microsoft ? "checkmark.seal.fill" : "person.fill", title: acc.name,
-                         info: acc.kind == .microsoft ? T("微软账号", "Microsoft") : T("离线账号", "Offline"),
-                         selected: acc.id == store.selected?.id,
-                         action: { store.selectedId = acc.id; show = false }) {
-                    IconButton(systemImage: "trash", help: T("删除", "Delete")) { store.remove(acc) }
+            if store.accounts.isEmpty {
+                Text(T("还没有账号，可添加离线账号或登录正版。", "No accounts yet. Add an offline account or sign in with Microsoft."))
+                    .font(.system(size: 12)).foregroundStyle(Theme.text2)
+            }
+            VStack(spacing: 0) {
+                ForEach(Array(store.accounts.enumerated()), id: \.element.id) { i, acc in
+                    if renaming == acc.id {
+                        renameRow(acc)
+                    } else {
+                        AccountRow(account: acc, index: i, current: acc.id == store.selected?.id,
+                                   pinnedHere: acc.id == pinned?.id, instance: instance,
+                                   onSelect: { store.select(acc); state.showAccounts = false },
+                                   onRename: { newName = acc.name; renaming = acc.id },
+                                   onRelogin: { msLogin = true },
+                                   onDelete: { delete(acc) })
+                    }
                 }
             }
             Divider()
@@ -358,7 +392,7 @@ struct AccountPopover: View {
                     .onSubmit(addOffline)
                 Button(T("确定", "OK"), action: addOffline).buttonStyle(.kiln)
             }
-            if let warn = offlineWarning {
+            if let warn = Self.nameWarning(offlineName) {
                 Text(warn).font(.system(size: 11)).foregroundStyle(Theme.red).fixedSize(horizontal: false, vertical: true)
             }
             Divider()
@@ -368,7 +402,7 @@ struct AccountPopover: View {
                 }
                 .buttonStyle(.kilnPrimary)
                 Spacer()
-                Button(T("购买 Minecraft", "Buy Minecraft").replacingOccurrences(of: "»  ", with: "")) { Links.open(Links.buyMinecraft) }
+                Button(T("购买 Minecraft", "Buy Minecraft")) { Links.open(Links.buyMinecraft) }
                     .buttonStyle(.plain).foregroundStyle(Theme.accent).font(.system(size: 12))
             }
         }
@@ -377,8 +411,24 @@ struct AccountPopover: View {
         .sheet(isPresented: $msLogin) { MicrosoftLoginSheet(show: $msLogin) }
     }
 
-    private var offlineWarning: String? {
-        let n = offlineName
+    private func renameRow(_ acc: Account) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                TextField(T("玩家名称", "Player name"), text: $newName)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { commitRename(acc) }
+                Button(T("保存", "Save")) { commitRename(acc) }.buttonStyle(.kiln)
+                Button(T("取消", "Cancel")) { renaming = nil }.buttonStyle(.kiln)
+            }
+            Text(Self.nameWarning(newName) ?? T("离线账号的 UUID 会随名称改变，存档中的物品栏等数据按 UUID 保存。", "An offline account's UUID changes with its name; player data in worlds is stored by UUID."))
+                .font(.system(size: 11)).foregroundStyle(Self.nameWarning(newName) == nil ? Theme.text3 : Theme.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(Theme.accentSoft)
+    }
+
+    static func nameWarning(_ n: String) -> String? {
         if n.isEmpty { return nil }
         if let e = AccountStore.validateOffline(n) { return e }
         if n.count > 16 { return T("1.20.3 起名称最多 16 个字符", "Since 1.20.3 names are limited to 16 characters") }
@@ -391,7 +441,115 @@ struct AccountPopover: View {
         if let e = AccountStore.validateOffline(n) { Hint.show(e, .red); return }
         store.addOffline(n)
         offlineName = ""
-        show = false
+        state.showAccounts = false
+    }
+
+    private func commitRename(_ acc: Account) {
+        let n = newName.trimmingCharacters(in: .whitespaces)
+        if let e = AccountStore.validateOffline(n) { Hint.show(e, .red); return }
+        if n != acc.name {
+            guard let renamed = store.renameOffline(acc, to: n) else {
+                Hint.show(T("已经有名为 \(n) 的离线账号", "There's already an offline account named \(n)"), .red)
+                return
+            }
+            state.repin(from: acc.id, to: renamed.id)
+        }
+        renaming = nil
+    }
+
+    private func delete(_ acc: Account) {
+        Task {
+            let r = await MsgBox.show(title: T("删除账号", "Remove account"),
+                                      content: T("确定要删除 \(acc.name)（\(acc.typeText)）吗？", "Remove \(acc.name) (\(acc.typeText))?"),
+                                      buttons: [T("删除", "Remove"), T("取消", "Cancel")], warn: true)
+            if r == 1 {
+                store.remove(acc)
+                state.pinRevision += 1
+            }
+        }
+    }
+}
+
+/// 账号列表中的一行
+private struct AccountRow: View {
+    let account: Account
+    let index: Int
+    let current: Bool
+    let pinnedHere: Bool
+    let instance: McInstance?
+    let onSelect: () -> Void
+    let onRename: () -> Void
+    let onRelogin: () -> Void
+    let onDelete: () -> Void
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        ListItem(systemIcon: account.kind == .microsoft ? "checkmark.seal.fill" : "person.fill", title: account.name,
+                 info: account.needsLogin == true ? T("微软账号 · 需要重新登录", "Microsoft · needs to sign in again") : account.typeText,
+                 selected: current,
+                 action: { if account.needsLogin == true { onRelogin() } else { onSelect() } }) {
+            if account.needsLogin == true {
+                Rectangle().fill(Theme.red).frame(width: 6, height: 6)
+            }
+            if pinnedHere {
+                Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(Theme.text2)
+                    .help(T("固定给 \(instance?.name ?? "") 使用", "Pinned to \(instance?.name ?? "")"))
+            }
+            menu
+        }
+        .help(index < 9 ? T("⌃⌘\(index + 1) 切换到此账号", "⌃⌘\(index + 1) switches to this account") : "")
+    }
+
+    private var menu: some View {
+        Menu {
+            Button(T("设为当前账号", "Use this account")) { onSelect() }.disabled(current)
+            if let instance {
+                if pinnedHere {
+                    Button(T("取消在 \(instance.name) 中固定", "Unpin from \(instance.name)")) { state.pin(nil, to: instance) }
+                } else {
+                    Button(T("固定给 \(instance.name) 使用", "Pin to \(instance.name)")) { state.pin(account, to: instance) }
+                }
+            }
+            Divider()
+            if account.kind == .microsoft {
+                Button(T("重新登录…", "Sign in again…")) { onRelogin() }
+            } else {
+                Button(T("修改名称…", "Rename…")) { onRename() }
+            }
+            Button(T("复制 UUID", "Copy UUID")) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(account.uuid, forType: .string)
+                Hint.show(T("已复制！", "Copied!"), .green)
+            }
+            Divider()
+            Button(T("上移", "Move up")) { AccountStore.shared.move(account, by: -1) }.disabled(index == 0)
+            Button(T("下移", "Move down")) { AccountStore.shared.move(account, by: 1) }
+                .disabled(index == AccountStore.shared.accounts.count - 1)
+            Divider()
+            Button(T("删除…", "Remove…"), role: .destructive) { onDelete() }
+        } label: {
+            Image(systemName: "ellipsis").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text2)
+                .frame(width: 28, height: 28)
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+    }
+}
+
+/// 菜单栏“账号”：⌃⌘1～9 快速切换
+struct AccountCommands: Commands {
+    let state: AppState
+
+    var body: some Commands {
+        CommandMenu(T("账号", "Accounts")) {
+            let store = AccountStore.shared
+            ForEach(Array(store.accounts.prefix(9).enumerated()), id: \.element.id) { i, acc in
+                Toggle(acc.name + "（\(acc.typeText)）", isOn: Binding(get: { store.selected?.id == acc.id }, set: { _ in store.select(acc) }))
+                    .keyboardShortcut(KeyEquivalent(Character("\(i + 1)")), modifiers: [.command, .control])
+            }
+            if !store.accounts.isEmpty { Divider() }
+            Button(T("管理账号…", "Manage Accounts…")) { state.showAccounts = true }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+        }
     }
 }
 

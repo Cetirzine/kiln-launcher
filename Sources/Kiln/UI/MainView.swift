@@ -58,8 +58,7 @@ struct Sidebar: View {
     var body: some View {
         VStack(spacing: 2) {
             // 为红绿灯按钮留出空间
-            Color.clear.frame(height: 46)
-            Logo().padding(.bottom, 18)
+            Color.clear.frame(height: 52)
             item(.home, T("开始", "Play"), "play.fill")
             item(.instances, T("版本", "Instances"), "square.grid.3x3.fill")
             item(.download, T("下载", "Download"), "arrow.down.to.line")

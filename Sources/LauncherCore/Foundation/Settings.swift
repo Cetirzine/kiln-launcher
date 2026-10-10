@@ -130,6 +130,8 @@ package final class LauncherSettings {
         package var lastPlayed: Date?
         /// 自定义图标（方块），为空时按版本类型自动选择
         package var icon: String?
+        /// 固定使用的账号（Account.id），为空时使用当前账号
+        package var account: String?
         package init() {}
     }
 

@@ -8,9 +8,15 @@ package struct Account: Codable, Identifiable, Hashable {
     package var kind: Kind
     package var name: String
     package var uuid: String
+    /// 微软账号的登录已失效（刷新令牌被撤销或过期），需要重新登录
+    package var needsLogin: Bool?
 
     package init(kind: Kind, name: String, uuid: String) {
         self.kind = kind; self.name = name; self.uuid = uuid
+    }
+
+    package var typeText: String {
+        kind == .microsoft ? T("微软账号", "Microsoft") : T("离线账号", "Offline")
     }
 
     /// 与原版服务端一致的离线 UUID（UUID v3，"OfflinePlayer:" + 玩家名）
@@ -57,6 +63,46 @@ package final class AccountStore {
 
     package var selected: Account? { accounts.first { $0.id == selectedId } ?? accounts.first }
 
+    package func account(id: String?) -> Account? {
+        guard let id else { return nil }
+        return accounts.first { $0.id == id }
+    }
+
+    /// 某个版本启动时使用的账号：版本指定了且仍存在时用指定的，否则用当前账号
+    package func account(for setup: LauncherSettings.InstanceSetup) -> Account? {
+        account(id: setup.account) ?? selected
+    }
+
+    package func select(_ acc: Account) { selectedId = acc.id }
+
+    /// 按列表位置切换（菜单栏 ⌃⌘1～9）
+    package func select(at index: Int) {
+        guard accounts.indices.contains(index) else { return }
+        selectedId = accounts[index].id
+    }
+
+    /// 调整顺序
+    package func move(_ acc: Account, by offset: Int) {
+        guard let i = accounts.firstIndex(where: { $0.id == acc.id }) else { return }
+        let j = min(max(i + offset, 0), accounts.count - 1)
+        guard i != j else { return }
+        accounts.insert(accounts.remove(at: i), at: j)
+        save()
+    }
+
+    /// 修改离线账号名称；UUID 随名称重新计算（与服务端离线模式一致）。返回新账号，名称已被占用时返回 nil
+    @discardableResult
+    package func renameOffline(_ acc: Account, to name: String) -> Account? {
+        guard acc.kind == .offline, let i = accounts.firstIndex(where: { $0.id == acc.id }) else { return nil }
+        let renamed = Account(kind: .offline, name: name, uuid: Account.offlineUUID(name))
+        if renamed.id != acc.id && accounts.contains(where: { $0.id == renamed.id }) { return nil }
+        let wasSelected = selected?.id == acc.id
+        accounts[i] = renamed
+        if wasSelected { selectedId = renamed.id }
+        save()
+        return renamed
+    }
+
     package func save() {
         let enc = JSONEncoder()
         enc.outputFormatting = .prettyPrinted
@@ -87,11 +133,21 @@ package final class AccountStore {
 
     package func addMicrosoft(profile: (name: String, uuid: String), refreshToken: String, accessToken: String, expires: Date) {
         let acc = Account(kind: .microsoft, name: profile.name, uuid: profile.uuid)
-        accounts.removeAll { $0.id == acc.id }
-        accounts.insert(acc, at: 0)
+        // 重新登录已有账号时保持原来的位置
+        if let i = accounts.firstIndex(where: { $0.id == acc.id }) {
+            accounts[i] = acc
+        } else {
+            accounts.insert(acc, at: 0)
+        }
         Keychain.set(refreshToken, for: acc.uuid)
         tokenCache[acc.uuid] = (accessToken, expires)
         selectedId = acc.id
+        save()
+    }
+
+    private func setNeedsLogin(_ acc: Account, _ value: Bool) {
+        guard let i = accounts.firstIndex(where: { $0.id == acc.id }) else { return }
+        accounts[i].needsLogin = value ? true : nil
         save()
     }
 
@@ -104,12 +160,23 @@ package final class AccountStore {
             if let c = tokenCache[acc.uuid], c.expires > Date().addingTimeInterval(300) {
                 return LoginResult(name: acc.name, uuid: acc.uuid, accessToken: c.token, userType: "msa")
             }
-            guard let refresh = Keychain.get(acc.uuid) else { throw LauncherError(T("正版登录已过期，请重新登录。", "Your Microsoft login expired. Please sign in again.")) }
-            let r = try await MicrosoftAuth.refresh(refresh)
+            guard let refresh = Keychain.get(acc.uuid) else {
+                setNeedsLogin(acc, true)
+                throw LauncherError(T("正版登录已过期，请重新登录。", "Your Microsoft login expired. Please sign in again."))
+            }
+            let r: MicrosoftAuth.Result
+            do {
+                r = try await MicrosoftAuth.refresh(refresh)
+            } catch {
+                // 网络问题不代表登录失效
+                if !Net.isTransient(error) { setNeedsLogin(acc, true) }
+                throw error
+            }
             Keychain.set(r.refreshToken, for: acc.uuid)
             tokenCache[acc.uuid] = (r.accessToken, r.expires)
-            if r.name != acc.name, let i = accounts.firstIndex(of: acc) {
+            if let i = accounts.firstIndex(where: { $0.id == acc.id }), accounts[i].name != r.name || accounts[i].needsLogin == true {
                 accounts[i].name = r.name
+                accounts[i].needsLogin = nil
                 save()
             }
             return LoginResult(name: r.name, uuid: r.uuid, accessToken: r.accessToken, userType: "msa")

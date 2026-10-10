@@ -38,6 +38,7 @@ struct KilnApp: App {
                 Button(T("刷新", "Refresh")) { state.refreshInstances() }
                     .keyboardShortcut("r", modifiers: .command)
             }
+            AccountCommands(state: state)
             CommandGroup(after: .appSettings) {
                 Button(T("设置…", "Settings…")) { state.page = .setup; state.subPage = nil }
                     .keyboardShortcut(",", modifiers: .command)
@@ -64,6 +65,7 @@ enum Links {
     static let buyMinecraft = "https://www.minecraft.net/store/minecraft-java-bedrock-edition-pc"
     /// 署名：Plain Craft Launcher 2（龙腾猫跃）
     static let pcl2 = "https://github.com/Meloong-Git/PCL"
+    static let repository = "https://github.com/\(Updater.repository)"
     static let pcl2Author = "https://space.bilibili.com/11343203"
     static let hmcl = "https://github.com/HMCL-dev/HMCL"
     static let metalUniversal = MetalRenderer.homepage
@@ -117,6 +119,40 @@ final class AppState {
         instances.first { $0.name == LauncherSettings.shared.selectedInstance } ?? instances.first { $0.category != .error }
     }
 
+    // MARK: 账号
+
+    /// 显示账号弹窗（右上角）
+    var showAccounts = false
+    /// 版本固定账号变化时递增，用于刷新界面
+    var pinRevision = 0
+
+    /// 版本固定使用的账号（账号已删除时为 nil）
+    func pinnedAccount(_ instance: McInstance?) -> Account? {
+        _ = pinRevision
+        guard let instance else { return nil }
+        return AccountStore.shared.account(id: instance.setup.account)
+    }
+
+    /// 选中版本启动时实际使用的账号
+    var effectiveAccount: Account? { pinnedAccount(selectedInstance) ?? AccountStore.shared.selected }
+
+    func pin(_ account: Account?, to instance: McInstance) {
+        var setup = instance.setup
+        setup.account = account?.id
+        LauncherSettings.shared.saveInstanceSetup(setup, instance.dir)
+        pinRevision += 1
+    }
+
+    /// 离线账号改名后，把固定使用旧账号的版本改为新账号
+    func repin(from old: String, to new: String) {
+        for i in instances where i.setup.account == old {
+            var setup = i.setup
+            setup.account = new
+            LauncherSettings.shared.saveInstanceSetup(setup, i.dir)
+        }
+        pinRevision += 1
+    }
+
     /// 开始监视游戏目录，并在 App 回到前台时刷新
     func startAutoRefresh() {
         let folder = LauncherSettings.shared.minecraftURL
@@ -167,8 +203,12 @@ final class AppState {
             page = .download
             return
         }
-        guard let account = AccountStore.shared.selected else {
+        if let pinned = instance.setup.account, AccountStore.shared.account(id: pinned) == nil {
+            Hint.show(T("\(instance.name) 固定使用的账号已删除，改用当前账号", "The account pinned to \(instance.name) was removed; using the current account"), .blue)
+        }
+        guard let account = AccountStore.shared.account(for: instance.setup) else {
             Hint.show(T("请先在右上角添加账号", "Add an account in the top-right corner first"), .red)
+            showAccounts = true
             return
         }
         let callbacks = LaunchCallbacks(onWindow: { _ in Self.onGameWindow() }, onExit: { Self.onGameExit($0, instance: instance) })
@@ -183,8 +223,11 @@ final class AppState {
                 Hint.show(T("已取消启动", "Launch cancelled"), .blue)
                 throw CancellationError()
             } catch {
-                _ = await MsgBox.show(title: T("无法启动", "Couldn't launch"), content: error.friendly,
-                                      buttons: [T("好", "OK")], warn: true)
+                // 微软账号登录失效时，可以直接重新登录
+                let expired = AccountStore.shared.account(id: account.id)?.needsLogin == true
+                let choice = await MsgBox.show(title: T("无法启动", "Couldn't launch"), content: error.friendly,
+                                               buttons: expired ? [T("重新登录", "Sign in again"), T("好", "OK")] : [T("好", "OK")], warn: true)
+                if expired && choice == 1 { self.showAccounts = true }
                 throw error
             }
         }

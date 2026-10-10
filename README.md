@@ -36,7 +36,7 @@
 
 - 原版、Fabric、Quilt、Forge、NeoForge 安装（Forge / NeoForge 运行安装器 processors，思路参考 [HMCL](https://github.com/HMCL-dev/HMCL)）
 - 安装 Forge 时可同时加装 OptiFine 与 LiteLoader（只在该游戏版本有对应组件时显示）
-- 离线账号与微软账号（设备代码登录，刷新令牌保存在钥匙串）
+- 离线账号与微软账号（设备代码登录，刷新令牌保存在钥匙串）；多账号一键切换（菜单栏 ⌃⌘1～9），每个版本可固定使用某个账号
 - 自动选择 / 下载 Java（Mojang 官方运行时、Azul Zulu）
 - 版本独立游戏目录、独立 Java / 内存 / 参数设置
 - Modrinth 与 CurseForge（经 MCIM 镜像，可填写官方 API 密钥）的 Mod、资源包、光影搜索与下载，Mod 可按加载器（Fabric、Forge、NeoForge、Quilt）筛选；本地 Mod 启用 / 禁用

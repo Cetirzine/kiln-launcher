@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${VERSION:-0.2.3}"
+VERSION="${VERSION:-0.2.4}"
 ARCH="${ARCH:-arm64}"            # 需要同时支持 Intel 时可设为 "arm64 x86_64"
 APP="build/Kiln.app"
 
@@ -53,6 +53,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleLocalizations</key><array><string>zh_CN</string><string>zh_TW</string><string>en</string></array>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
+    <key>NSHumanReadableCopyright</key><string>© 2026 NelsonPence</string>
     <key>LSArchitecturePriority</key><array><string>arm64</string></array>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>

@@ -18,7 +18,12 @@ struct AboutPage: View {
                                     .font(.system(size: 12)).foregroundStyle(Theme.text2)
                                 Text("\(AppInfo.version) · macOS \(RuleContext.osVersion) · \(Arch.native)")
                                     .font(.system(size: 11)).foregroundStyle(Theme.text3)
+                                Text(T("作者：\(AppInfo.author)", "By \(AppInfo.author)"))
+                                    .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text)
+                                    .padding(.top, 2)
                             }
+                            Spacer()
+                            Button("GitHub") { Links.open(Links.repository) }.buttonStyle(.kiln)
                         }
                     }
                     Card(T("署名", "Attribution")) {
