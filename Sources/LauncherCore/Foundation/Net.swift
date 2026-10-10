@@ -47,7 +47,8 @@ package enum Net {
 
     // MARK: 请求
 
-    package static func data(_ urls: [String], timeout: TimeInterval? = nil, headers: [String: String] = [:]) async throws -> Data {
+    /// fresh：跳过本地 HTTP 缓存（用于检查更新等需要最新结果的请求）
+    package static func data(_ urls: [String], timeout: TimeInterval? = nil, headers: [String: String] = [:], fresh: Bool = false) async throws -> Data {
         var lastError: Error = LauncherError("No URL")
         let firstTimeout: TimeInterval? = {
             if let timeout { return timeout }
@@ -57,6 +58,7 @@ package enum Net {
         for (i, u) in urls.enumerated() {
             guard let url = URL(string: u) else { continue }
             var req = URLRequest(url: url)
+            if fresh { req.cachePolicy = .reloadIgnoringLocalCacheData }
             if i == 0, let t = firstTimeout { req.timeoutInterval = t }
             for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
             do {

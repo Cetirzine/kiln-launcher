@@ -36,7 +36,7 @@ package enum Updater {
 
     /// 获取最新版本；比当前版本新时返回 Release
     package static func check() async throws -> Release? {
-        let j = try await Net.json(urls: ["https://api.github.com/repos/\(repository)/releases/latest"])
+        let j = try JSON(data: try await Net.data(["https://api.github.com/repos/\(repository)/releases/latest"], fresh: true))
         guard let tag = j["tag_name"].string, j["draft"].bool != true, j["prerelease"].bool != true else { return nil }
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         guard isNewer(version, than: AppInfo.version) else { return nil }
