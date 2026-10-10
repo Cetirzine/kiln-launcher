@@ -308,29 +308,42 @@ struct Badge: View {
     }
 }
 
-// MARK: - 提示
+// MARK: - 通知
 
 @MainActor
 @Observable
 final class Hint {
     enum Kind { case blue, green, red
         var color: Color {
-            switch self { case .blue: return Color.white.opacity(0.7); case .green: return Theme.playLight; case .red: return Color(hex: 0xF07167) }
+            switch self { case .blue: return Theme.text2; case .green: return Theme.green; case .red: return Theme.red }
         }
     }
     struct Item: Identifiable { let id = UUID(); let text: String; let kind: Kind }
 
     static let shared = Hint()
     var items: [Item] = []
+    /// 鼠标悬停中的通知不会自动消失
+    var hovering: UUID?
 
     static func show(_ text: String, _ kind: Kind = .blue) {
         let item = Item(text: text, kind: kind)
         log("[Hint] \(text)")
-        withAnimation(.easeOut(duration: 0.2)) { shared.items.append(item) }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(max(3, Double(text.count) * 0.08) * 1_000_000_000))
-            withAnimation(.easeIn(duration: 0.2)) { shared.items.removeAll { $0.id == item.id } }
+        withAnimation(.easeOut(duration: 0.25)) {
+            shared.items.append(item)
+            // 最多同时显示 4 条
+            if shared.items.count > 4 { shared.items.removeFirst(shared.items.count - 4) }
         }
+        Task { @MainActor in
+            // 显示时长随文字长度增加，错误多停留一会儿
+            let seconds = max(kind == .red ? 6 : 3.5, Double(text.count) * 0.09)
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            while shared.hovering == item.id { try? await Task.sleep(nanoseconds: 300_000_000) }
+            dismiss(item.id)
+        }
+    }
+
+    static func dismiss(_ id: UUID) {
+        withAnimation(.easeIn(duration: 0.25)) { shared.items.removeAll { $0.id == id } }
     }
 
     nonisolated static func showOnMain(_ text: String, _ kind: Kind = .blue) async {
@@ -338,26 +351,51 @@ final class Hint {
     }
 }
 
-/// 左下角的提示条，像游戏里的聊天消息
+/// 右下角的通知卡片：淡入淡出，可提前关闭
 struct HintOverlay: View {
     @PState private var hint = Hint.shared
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .trailing, spacing: 8) {
             ForEach(hint.items) { item in
-                HStack(spacing: 0) {
-                    Rectangle().fill(item.kind.color).frame(width: 3)
-                    Text(item.text).font(.system(size: 12.5)).foregroundStyle(.white)
-                        .padding(.horizontal, 10).padding(.vertical, 7)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .background(Color(hex: 0x111111, alpha: 0.86))
-                .frame(maxWidth: 420, alignment: .leading)
-                .transition(.opacity)
+                HintCard(item: item)
+                    .transition(.opacity.combined(with: .offset(y: 8)))
             }
         }
-        .padding(.leading, 96).padding(.bottom, 18)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        .allowsHitTesting(false)
+        .padding(.trailing, 20).padding(.bottom, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+    }
+}
+
+private struct HintCard: View {
+    let item: Hint.Item
+    @PState private var hover = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Rectangle().fill(item.kind.color).frame(width: 7, height: 7).padding(.top, 5)
+            Text(item.text).font(.system(size: 12.5)).foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            Spacer(minLength: 4)
+            Button { Hint.dismiss(item.id) } label: {
+                Image(systemName: "xmark").font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(hover ? Theme.text : Theme.text3)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(T("关闭", "Close"))
+        }
+        .padding(.leading, 12).padding(.trailing, 8).padding(.vertical, 9)
+        .frame(width: 320, alignment: .leading)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.stroke))
+        .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
+        .onHover { h in
+            hover = h
+            Hint.shared.hovering = h ? item.id : (Hint.shared.hovering == item.id ? nil : Hint.shared.hovering)
+        }
     }
 }
 

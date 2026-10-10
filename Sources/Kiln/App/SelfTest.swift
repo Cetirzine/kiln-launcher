@@ -47,6 +47,22 @@ enum SelfTest {
         }
         let crash = CrashAnalyzer.analyze(["Exception in thread \"main\" java.lang.UnsupportedClassVersionError: foo"])
         expect(crash != nil, "崩溃分析：Java 版本")
+        // 文件监视：版本目录的变化会触发刷新，资源文件的变化被忽略
+        expect(FolderWatcher.isRelevant("/mc/versions/1.21/1.21.json") && FolderWatcher.isRelevant("/mc/versions/1.21/mods/a.jar")
+               && !FolderWatcher.isRelevant("/mc/assets/objects/ab/abcd") && !FolderWatcher.isRelevant("/mc/versions/1.21/1.21-natives/x.dylib"),
+               "文件监视的路径过滤")
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("kiln-watch-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tmp.appendingPathComponent("versions"), withIntermediateDirectories: true)
+        var fired = 0
+        let watcher = FolderWatcher { fired += 1 }
+        watcher.watch(tmp)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        try? FileManager.default.createDirectory(at: tmp.appendingPathComponent("versions/test"), withIntermediateDirectories: true)
+        let deadline = Date().addingTimeInterval(5)
+        while fired == 0 && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+        watcher.stop()
+        try? FileManager.default.removeItem(at: tmp)
+        expect(fired > 0, "文件监视：新建版本文件夹后自动刷新")
         print(failures == 0 ? "全部通过" : "\(failures) 项失败")
         return failures == 0
     }
@@ -152,5 +168,47 @@ enum SelfTest {
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         }
         return ok
+    }
+}
+
+/// `--download-bench <游戏目录>`：用启动器自己的下载引擎测试不同下载源与并发数的速度
+enum DownloadBench {
+    nonisolated static func run(folder: URL) {
+        let sem = DispatchSemaphore(value: 0)
+        Task { @MainActor in
+            defer { sem.signal() }
+            let indexes = folder.appendingPathComponent("assets/indexes")
+            guard let file = try? FileManager.default.contentsOfDirectory(at: indexes, includingPropertiesForKeys: nil).first,
+                  let j = try? JSON(data: Data(contentsOf: file)) else { print("没有找到资源索引"); return }
+            let hashes = j["objects"].object.values.compactMap { $0["hash"].string }.sorted().prefix(1200)
+            let settings = LauncherSettings.shared
+            let original = (settings.fileSource, settings.downloadThreads)
+            defer { settings.fileSource = original.0; settings.downloadThreads = original.1 }
+            print("代理：\(Net.systemProxyEnabled ? "已开启" : "未开启")")
+            let combos: [(LauncherSettings.DownloadSource, String, Int)] = [
+                (.officialFirst, "官方", 16), (.officialFirst, "官方", 64), (.mirrorFirst, "镜像", 16), (.mirrorFirst, "镜像", 64),
+            ]
+            for (i, (source, name, threads)) in combos.enumerated() {
+                settings.fileSource = source
+                let batch = hashes.dropFirst(i * 300).prefix(300)
+                let dir = Paths.cache.appendingPathComponent("bench-\(i)")
+                try? FileManager.default.removeItem(at: dir)
+                let items = batch.map { h in
+                    DownloadItem(url: "https://resources.download.minecraft.net/\(h.prefix(2))/\(h)",
+                                 destination: dir.appendingPathComponent(h), sha1: h)
+                }
+                let start = Date()
+                var result = "完成"
+                do { try await Downloader.run(items, job: nil, threads: threads, checkHash: false) }
+                catch { result = "失败：\(error.friendly)" }
+                let t = Date().timeIntervalSince(start)
+                let size = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey]))?
+                    .reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) } ?? 0
+                print(String(format: "%@ %2d 路：300 个文件 %.1f 秒（%.1f 个/秒，%.2f MB/s）%@",
+                             name, threads, t, 300 / t, Double(size) / 1048576 / t, result))
+                try? FileManager.default.removeItem(at: dir)
+            }
+        }
+        while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
     }
 }

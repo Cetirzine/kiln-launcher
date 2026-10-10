@@ -86,10 +86,15 @@ final class AppState {
     enum DownloadSection: Hashable { case game, mod, resourcepack, shader, manager }
     enum SetupSection: Hashable { case game, performance, java, download, other }
 
-    var page: Page = .home
+    var page: Page = .home { didSet { if page != oldValue { refreshInstances() } } }
+    /// 游戏目录中的版本或 Mod 发生变化时递增，用于刷新 Mod 列表等界面
+    var fileRevision = 0
+    @ObservationIgnored private var watcher: FolderWatcher?
+    @ObservationIgnored private var watchedFolder: String?
+    @ObservationIgnored private var activeObserver: NSObjectProtocol?
     var downloadSection: DownloadSection = .game
     var setupSection: SetupSection = .game
-    var subPage: SubPage?
+    var subPage: SubPage? { didSet { if subPage != oldValue { refreshInstances() } } }
     var instances: [McInstance] = []
     var loadingInstances = false
     var games: [GameProcess] = []
@@ -104,7 +109,31 @@ final class AppState {
         instances.first { $0.name == LauncherSettings.shared.selectedInstance } ?? instances.first { $0.category != .error }
     }
 
+    /// 开始监视游戏目录，并在 App 回到前台时刷新
+    func startAutoRefresh() {
+        let folder = LauncherSettings.shared.minecraftURL
+        if watchedFolder != folder.path {
+            watchedFolder = folder.path
+            if watcher == nil {
+                watcher = FolderWatcher { [weak self] in
+                    self?.fileRevision += 1
+                    self?.refreshInstances()
+                }
+            }
+            watcher?.watch(folder)
+        }
+        if activeObserver == nil {
+            activeObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    AppState.shared.fileRevision += 1
+                    AppState.shared.refreshInstances()
+                }
+            }
+        }
+    }
+
     func refreshInstances() {
+        startAutoRefresh()
         loadingInstances = true
         let folder = LauncherSettings.shared.minecraftURL
         Task.detached(priority: .userInitiated) {

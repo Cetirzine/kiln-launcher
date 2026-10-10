@@ -13,7 +13,6 @@ struct InstancesPage: View {
         VStack(spacing: 0) {
             PageHeader(T("版本", "Instances"), subtitle: settings.minecraftFolder) {
                 folderMenu
-                IconButton(systemImage: "arrow.clockwise", help: T("刷新", "Refresh")) { state.refreshInstances() }
                 IconButton(systemImage: "folder", help: T("在访达中显示", "Show in Finder")) { NSWorkspace.shared.open(settings.minecraftURL) }
                 Button(T("安装新版本", "Install a version")) { state.page = .download; state.downloadSection = .game }
                     .buttonStyle(.kiln)
@@ -366,7 +365,6 @@ struct ModManager: View {
     var body: some View {
         Card(T("已安装的 Mod", "Installed mods") + " · \(files.count)",
              trailing: AnyView(HStack(spacing: 4) {
-                 IconButton(systemImage: "arrow.clockwise", help: T("刷新", "Refresh")) { reload() }
                  IconButton(systemImage: "folder", help: T("打开文件夹", "Open folder")) {
                      try? FileManager.default.createDirectory(at: modsDir, withIntermediateDirectories: true)
                      NSWorkspace.shared.open(modsDir)
@@ -400,6 +398,8 @@ struct ModManager: View {
             }
         }
         .onAppear(perform: reload)
+        // 游戏目录中的 Mod 变化后自动刷新
+        .onChange(of: state.fileRevision) { _, _ in reload() }
     }
 
     private func reload() {

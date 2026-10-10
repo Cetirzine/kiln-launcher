@@ -350,9 +350,7 @@ package enum Downloader {
         defer { monitor.cancel() }
 
         // 第一轮：按设置的并发数下载；个别文件失败时先记下，不立即让整个任务失败
-        // 经过系统代理时，过多的并发连接容易在代理处排队超时
-        let firstThreads = Net.systemProxyEnabled ? min(threads, 16) : threads
-        var failed = try await pass(todo, threads: firstThreads, attempts: nil, counter: counter)
+        var failed = try await pass(todo, threads: threads, attempts: nil, counter: counter)
         // 第二轮：网络拥塞（例如经过本地代理）时，降低并发、增加重试次数再试一次
         if !failed.isEmpty {
             log("[Download] \(failed.count) 个文件下载失败，降低并发后重试")

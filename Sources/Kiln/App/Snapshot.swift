@@ -25,6 +25,9 @@ enum Snapshot {
                 try? png.write(to: dir.appendingPathComponent("icon-picker.png"))
             }
         }
+        // 示例通知，用于检查通知样式
+        Hint.show(T("已取消启动", "Launch cancelled"), .blue)
+        Hint.show(T("安装 1.21.1 失败：下载 5de7eb14 失败：请求超时（共 1 个文件未能下载，请检查网络或在设置中切换下载源）", "Installing 1.21.1 failed: request timed out"), .red)
         let original = LauncherSettings.shared.language
         defer { LauncherSettings.shared.language = original }
         for (lang, scheme) in [(AppLanguage.zhHans, ColorScheme.light), (.zhHans, .dark), (.en, .light)] {

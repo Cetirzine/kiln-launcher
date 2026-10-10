@@ -14,6 +14,10 @@ enum Entry {
             let ok = SelfTest.runLaunch(version: args[i + 1], folder: URL(fileURLWithPath: args[i + 2]), loader: loader)
             exit(ok ? 0 : 1)
         }
+        if let i = args.firstIndex(of: "--download-bench"), args.count > i + 1 {
+            DownloadBench.run(folder: URL(fileURLWithPath: args[i + 1]))
+            exit(0)
+        }
         if let i = args.firstIndex(of: "--snapshot"), args.count > i + 1 {
             let folder = args.count > i + 2 ? URL(fileURLWithPath: args[i + 2]) : nil
             Task { @MainActor in
