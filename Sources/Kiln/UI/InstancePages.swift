@@ -54,7 +54,7 @@ struct InstancesPage: View {
             Text(T("名称", "Name")).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 42)
             Text(T("运行方式", "Runs as")).frame(width: 150, alignment: .leading)
             Text(T("上次游玩", "Last played")).frame(width: 110, alignment: .leading)
-            Color.clear.frame(width: 80)
+            Color.clear.frame(width: 80, height: 1)
         }
         .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
         .padding(.horizontal, 28).padding(.bottom, 6)
