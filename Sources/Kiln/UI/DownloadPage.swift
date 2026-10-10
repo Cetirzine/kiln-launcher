@@ -382,6 +382,8 @@ struct ResourceSearchPage: View {
     @PState private var loading = false
     @PState private var error: String?
     @PState private var target: String = ""
+    /// Mod 加载器筛选，空字符串表示全部
+    @PState private var loader: String = ""
     @PState private var detail: Modrinth.Project?
     @PState private var searchTask: Task<Void, Never>?
 
@@ -405,6 +407,23 @@ struct ResourceSearchPage: View {
                 }
                 .frame(width: 240)
             }
+            if type == .mod {
+                HStack(spacing: 10) {
+                    Picker("", selection: $loader) {
+                        Text(T("全部加载器", "All loaders")).tag("")
+                        ForEach(["Fabric", "Forge", "NeoForge", "Quilt"], id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                    if loader == "Quilt" {
+                        Text(T("包含可在 Quilt 上运行的 Fabric Mod", "Includes Fabric mods, which run on Quilt"))
+                            .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
+                    } else if let i = instance, let own = instanceLoader(i), !loader.isEmpty, own != loader {
+                        Text(T("与所选版本的加载器（\(own)）不同", "Differs from the selected instance's loader (\(own))"))
+                            .font(.system(size: 11.5)).foregroundStyle(Theme.yellow)
+                    }
+                    Spacer()
+                }
+            }
             PageScroll {
                 LazyVStack(spacing: 0) {
                     if loading && results.isEmpty { ProgressView().padding(40) }
@@ -423,19 +442,29 @@ struct ResourceSearchPage: View {
         .onAppear {
             if let t = ResourceSearchPage.targetInstance { target = t; ResourceSearchPage.targetInstance = nil }
             else if let s = state.selectedInstance, type != .mod || s.isModded { target = s.name }
+            if let i = instance, let own = instanceLoader(i) { loader = own }
             runSearch()
         }
-        .onChange(of: target) { _, _ in runSearch() }
+        .onChange(of: target) { _, _ in
+            // 切换目标版本时，加载器跟随该版本
+            if let i = instance, let own = instanceLoader(i) { loader = own }
+            runSearch()
+        }
+        .onChange(of: loader) { _, _ in runSearch() }
         .onChange(of: query) { _, _ in
             searchTask?.cancel()
             searchTask = Task { try? await Task.sleep(nanoseconds: 400_000_000); if !Task.isCancelled { runSearch() } }
         }
-        .sheet(item: $detail) { p in ProjectVersionsSheet(project: p, type: type, instance: instance) }
+        .sheet(item: $detail) { p in ProjectVersionsSheet(project: p, type: type, instance: instance, loader: loaderFilter) }
+    }
+
+    /// 实例使用的 Mod 加载器
+    private func instanceLoader(_ i: McInstance) -> String? {
+        i.loaders.first { ["Fabric", "Forge", "NeoForge", "Quilt"].contains($0) }
     }
 
     private var loaderFilter: String? {
-        guard type == .mod, let i = instance else { return nil }
-        return i.loaders.first { $0 != "OptiFine" }
+        type == .mod && !loader.isEmpty ? loader : nil
     }
 
     private func runSearch(more: Bool = false) {
@@ -491,6 +520,7 @@ struct ProjectVersionsSheet: View {
     let project: Modrinth.Project
     let type: Modrinth.ProjectType
     let instance: McInstance?
+    var loader: String?
     @PState private var versions: [Modrinth.Version] = []
     @PState private var loading = true
     @PState private var error: String?
@@ -531,7 +561,7 @@ struct ProjectVersionsSheet: View {
         .frame(width: 620, height: 520)
         .task {
             do {
-                let loader = type == .mod ? instance?.loaders.first { $0 != "OptiFine" } : nil
+                let loader = type == .mod ? self.loader : nil
                 versions = try await Modrinth.versions(project.id, gameVersion: instance?.vanillaVersion, loader: loader)
             } catch { self.error = error.friendly }
             loading = false

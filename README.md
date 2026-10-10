@@ -39,7 +39,7 @@
 - 离线账号与微软账号（设备代码登录，刷新令牌保存在钥匙串）
 - 自动选择 / 下载 Java（Mojang 官方运行时、Azul Zulu）
 - 版本独立游戏目录、独立 Java / 内存 / 参数设置
-- Modrinth 的 Mod、资源包、光影搜索与下载；本地 Mod 启用 / 禁用
+- Modrinth 的 Mod、资源包、光影搜索与下载，Mod 可按加载器（Fabric、Forge、NeoForge、Quilt）筛选；本地 Mod 启用 / 禁用
 - 游戏日志（解析 log4j XML）、崩溃原因分析、导出启动脚本
 - 简体中文 / 繁體中文（自动转换）/ English
 

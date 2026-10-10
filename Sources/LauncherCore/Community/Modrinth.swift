@@ -50,10 +50,19 @@ package enum Modrinth {
         v.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=+[]\""))) ?? v
     }
 
+    /// 某个加载器能使用的 Mod 类别：Quilt 可以加载大部分 Fabric Mod
+    package static func compatibleLoaders(_ loader: String) -> [String] {
+        let l = loader.lowercased()
+        return l == "quilt" ? ["quilt", "fabric"] : [l]
+    }
+
     package static func search(_ query: String, type: ProjectType, gameVersion: String?, loader: String?, offset: Int = 0) async throws -> [Project] {
         var facets = ["[\"project_type:\(type.rawValue)\"]"]
         if let gameVersion, !gameVersion.isEmpty { facets.append("[\"versions:\(gameVersion)\"]") }
-        if type == .mod, let loader, !loader.isEmpty { facets.append("[\"categories:\(loader.lowercased())\"]") }
+        // 同一层中的多个条件为“或”：Quilt 同时包含 Fabric Mod
+        if type == .mod, let loader, !loader.isEmpty {
+            facets.append("[" + compatibleLoaders(loader).map { "\"categories:\($0)\"" }.joined(separator: ",") + "]")
+        }
         let url = "\(api)/search?query=\(encode(query))&limit=30&offset=\(offset)&index=relevance&facets=\(encode("[" + facets.joined(separator: ",") + "]"))"
         let j = try await Net.json(urls: [url])
         return j["hits"].array.compactMap { h in
@@ -68,7 +77,9 @@ package enum Modrinth {
         var url = "\(api)/project/\(projectId)/version"
         var q: [String] = []
         if let gameVersion, !gameVersion.isEmpty { q.append("game_versions=" + encode("[\"\(gameVersion)\"]")) }
-        if let loader, !loader.isEmpty { q.append("loaders=" + encode("[\"\(loader.lowercased())\"]")) }
+        if let loader, !loader.isEmpty {
+            q.append("loaders=" + encode("[" + compatibleLoaders(loader).map { "\"\($0)\"" }.joined(separator: ",") + "]"))
+        }
         if !q.isEmpty { url += "?" + q.joined(separator: "&") }
         let j = try await Net.json(urls: [url])
         let iso = ISO8601DateFormatter()

@@ -224,3 +224,32 @@ enum DownloadBench {
         while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
     }
 }
+
+/// `--modrinth-check`：按加载器搜索 Mod，检查筛选结果
+enum ModrinthCheck {
+    nonisolated static func run() {
+        let sem = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var ok = true
+        Task {
+            defer { sem.signal() }
+            for loader in ["Fabric", "Forge", "NeoForge", "Quilt", ""] {
+                do {
+                    let r = try await Modrinth.search("", type: .mod, gameVersion: "1.20.1", loader: loader.isEmpty ? nil : loader)
+                    let allowed = loader.isEmpty ? nil : Set(Modrinth.compatibleLoaders(loader))
+                    let mismatched = allowed.map { a in r.filter { Set($0.categories).isDisjoint(with: a) } } ?? []
+                    if r.isEmpty || !mismatched.isEmpty { ok = false }
+                    print("\(loader.isEmpty ? "全部" : loader)：\(r.count) 个结果，前 3：\(r.prefix(3).map(\.title).joined(separator: "、"))\(mismatched.isEmpty ? "" : "，不符合筛选：\(mismatched.count)")")
+                } catch { ok = false; print("\(loader)：失败 \(error.friendly)") }
+            }
+            // 版本列表按加载器筛选（Sodium）
+            for loader in ["Fabric", "NeoForge"] {
+                let v = (try? await Modrinth.versions("AANobbMI", gameVersion: "1.21.1", loader: loader)) ?? []
+                let wrong = v.filter { !$0.loaders.contains(loader.lowercased()) }
+                if v.isEmpty || !wrong.isEmpty { ok = false }
+                print("Sodium 1.21.1 \(loader) 版本：\(v.count) 个\(wrong.isEmpty ? "" : "，不符合：\(wrong.count)")")
+            }
+        }
+        while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        print(ok ? "✔ 加载器筛选正常" : "✘ 加载器筛选有问题")
+    }
+}

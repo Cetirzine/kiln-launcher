@@ -11,7 +11,7 @@ A native macOS launcher for Minecraft: Java Edition, built with SwiftUI and tune
 - Installs and launches vanilla, Fabric, Quilt, Forge and NeoForge versions; OptiFine and LiteLoader can be added alongside Forge where available
 - Finds, selects or downloads the right Java runtime (Mojang runtimes, Azul Zulu for arm64 Java 8)
 - Signs in with a Microsoft account (OAuth 2.0 device code flow) or an offline profile for offline/LAN play
-- Searches and downloads mods, resource packs and shaders from Modrinth
+- Searches and downloads mods, resource packs and shaders from Modrinth, with mods filtered by loader (Fabric, Forge, NeoForge, Quilt)
 - Shows game logs and explains common crash causes
 
 ## Apple silicon
