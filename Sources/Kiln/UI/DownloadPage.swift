@@ -149,6 +149,12 @@ struct InstallPanel: View {
     @PState private var withFabricApi = true
     @PState private var metalAvailable = false
     @PState private var withMetal = false
+    // 随 Forge 一起安装的附加组件
+    @PState private var optifineVersions: [OptiFine.Version] = []
+    @PState private var optifineFile = ""
+    @PState private var withOptiFine = false
+    @PState private var liteVersions: [LiteLoader.Version] = []
+    @PState private var withLiteLoader = false
 
     var body: some View {
         Card(T("安装", "Install")) {
@@ -180,7 +186,10 @@ struct InstallPanel: View {
                     Toggle(T("同时安装 Fabric API", "Also install Fabric API"), isOn: $withFabricApi).toggleStyle(.checkbox)
                 }
             }
-            if metalAvailable && loader == .fabric {
+            if loader == .forge && (!optifineVersions.isEmpty || !liteVersions.isEmpty) {
+                forgeAddOns
+            }
+            if metalAvailable && (loader == .fabric || loader == .quilt) {
                 VStack(alignment: .leading, spacing: 3) {
                     Toggle(T("启用 Metal 渲染（实验性）", "Enable Metal rendering (experimental)"), isOn: $withMetal).toggleStyle(.checkbox)
                     Text(T("安装 MetalUniversal，使用 Apple Metal 代替 OpenGL / Vulkan 渲染。", "Installs MetalUniversal to render with Apple Metal instead of OpenGL / Vulkan."))
@@ -199,12 +208,70 @@ struct InstallPanel: View {
             .buttonStyle(.kilnPrimary)
             .disabled(nameWarning != nil || (loader != .none && loaderVersion.isEmpty))
         }
-        .onChange(of: loader) { _, _ in Task { await loadLoaders() } }
+        .onChange(of: loader) { _, _ in
+            Task { await loadLoaders() }
+            Task { await loadForgeAddOns() }
+        }
         .task {
             // 检查 MetalUniversal 是否支持该版本（仅 Apple 芯片）
             guard MetalRenderer.deviceSupported else { return }
             metalAvailable = !((try? await MetalRenderer.versions(game: version.id)) ?? []).isEmpty
         }
+    }
+
+    /// OptiFine / LiteLoader 选项（只显示该游戏版本支持的组件）
+    private var forgeAddOns: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !optifineVersions.isEmpty {
+                HStack(spacing: 8) {
+                    Toggle(T("同时安装 OptiFine", "Also install OptiFine"), isOn: $withOptiFine).toggleStyle(.checkbox)
+                    if withOptiFine {
+                        Picker("", selection: $optifineFile) {
+                            ForEach(optifineVersions) { v in
+                                Text(v.display + (v.isPreview ? T("（预览）", " (preview)") : "")).tag(v.filename)
+                            }
+                        }
+                        .labelsHidden().frame(maxWidth: 170)
+                    }
+                }
+                if withOptiFine, let warning = optifineCompatibility {
+                    Text(warning.text).font(.system(size: 11)).foregroundStyle(warning.ok ? Theme.text3 : Theme.yellow)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let lite = liteVersions.first {
+                Toggle(T("同时安装 LiteLoader \(lite.version)", "Also install LiteLoader \(lite.version)"), isOn: $withLiteLoader)
+                    .toggleStyle(.checkbox)
+            }
+            if withOptiFine || withLiteLoader {
+                Text(T("会作为 Mod 放入该版本的 mods 文件夹。OptiFine 与部分 Mod 兼容性不佳，遇到问题时可以在 Mod 管理中禁用。",
+                       "They're added to this instance's mods folder. OptiFine conflicts with some mods; disable it in Mods if you run into problems."))
+                    .font(.system(size: 11)).foregroundStyle(Theme.text3).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// 检查所选 OptiFine 要求的最低 Forge 版本
+    private var optifineCompatibility: (text: String, ok: Bool)? {
+        guard let v = optifineVersions.first(where: { $0.filename == optifineFile }), let need = v.forge else { return nil }
+        let required = need.replacingOccurrences(of: "Forge ", with: "")
+        guard !required.isEmpty, required.first?.isNumber == true else { return nil }
+        // Forge 版本号形如 1.20.1-47.4.26，取后半部分比较
+        let chosen = loaderVersion.split(separator: "-").dropFirst().first.map(String.init) ?? loaderVersion
+        let ok = chosen.compare(required, options: .numeric) != .orderedAscending
+        return ok ? (T("需要 Forge \(required) 或更新版本", "Requires Forge \(required) or newer"), true)
+                  : (T("这个 OptiFine 需要 Forge \(required) 或更新版本，当前选择的 Forge 较旧。", "This OptiFine needs Forge \(required) or newer; the selected Forge is older."), false)
+    }
+
+    private func loadForgeAddOns() async {
+        optifineVersions = []; liteVersions = []
+        withOptiFine = false; withLiteLoader = false
+        guard loader == .forge else { return }
+        async let of = OptiFine.versions(game: version.id)
+        async let ll = LiteLoader.versions(game: version.id)
+        optifineVersions = (try? await of) ?? []
+        liteVersions = (try? await ll) ?? []
+        optifineFile = (optifineVersions.first { !$0.isPreview } ?? optifineVersions.first)?.filename ?? ""
     }
 
     private var archNote: some View {
@@ -267,7 +334,9 @@ struct InstallPanel: View {
         let name = finalName, version = version, loader = loader, loaderVersion = loaderVersion
         let folder = LauncherSettings.shared.minecraftURL
         let fabricApi = loader == .fabric && withFabricApi
-        let metal = loader == .fabric && withMetal && metalAvailable
+        let metal = (loader == .fabric || loader == .quilt) && withMetal && metalAvailable
+        let optifine = loader == .forge && withOptiFine ? optifineVersions.first { $0.filename == optifineFile } : nil
+        let liteLoader = loader == .forge && withLiteLoader ? liteVersions.first : nil
         JobCenter.shared.start(T("安装 \(name)", "Install \(name)")) { job in
             switch loader {
             case .none:
@@ -285,6 +354,15 @@ struct InstallPanel: View {
                                                          sha1: v.sha1, size: v.size))
             }
             if metal { try await MetalRenderer.enable(instance, job: nil) }
+            let mods = instance.gameDir.appendingPathComponent("mods")
+            if let optifine {
+                job.stage = T("下载 OptiFine \(optifine.display)", "Downloading OptiFine \(optifine.display)")
+                try await OptiFine.install(optifine, into: mods, job: job)
+            }
+            if let liteLoader {
+                job.stage = T("下载 LiteLoader \(liteLoader.version)", "Downloading LiteLoader \(liteLoader.version)")
+                try await LiteLoader.install(liteLoader, into: mods, job: job)
+            }
             AppState.shared.refreshInstances()
             LauncherSettings.shared.selectedInstance = name
         }

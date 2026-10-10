@@ -90,8 +90,8 @@ enum SelfTest {
                     let remote = try await VersionManifest.find(version)
                     let job = Job(title: "install")
                     switch loader {
-                    case "Forge", "NeoForge":
-                        let kind = ForgeKind(rawValue: loader!)!
+                    case "Forge", "NeoForge", "ForgePlus":
+                        let kind = ForgeKind(rawValue: loader == "ForgePlus" ? "Forge" : loader!)!
                         let list = try await ForgeInstaller.versions(kind, game: version)
                         guard let v = list.first(where: { !$0.isBeta }) ?? list.first else { throw LauncherError("没有 \(kind.rawValue) 版本") }
                         print("\(kind.rawValue) \(v.version)")
@@ -106,6 +106,18 @@ enum SelfTest {
                     }
                 }
                 let instance = McInstance(folder: folder, name: name)
+                if loader == "ForgePlus" {
+                    let mods = instance.gameDir.appendingPathComponent("mods")
+                    if let of = try await OptiFine.versions(game: version).first(where: { !$0.isPreview }) {
+                        try await OptiFine.install(of, into: mods, job: nil)
+                        print("已安装 OptiFine \(of.display)（\(of.forge ?? "")）")
+                    }
+                    if let ll = try await LiteLoader.versions(game: version).first {
+                        try await LiteLoader.install(ll, into: mods, job: nil)
+                        print("已安装 LiteLoader \(ll.version)")
+                    }
+                    print("mods：\((try? FileManager.default.contentsOfDirectory(atPath: mods.path))?.sorted().joined(separator: ", ") ?? "")")
+                }
                 if loader == "FabricMetal" && !MetalRenderer.isEnabled(instance) {
                     try await MetalRenderer.enable(instance, job: nil)
                     print("已启用 Metal 渲染：\(MetalRenderer.installedJar(instance)?.lastPathComponent ?? "?")")

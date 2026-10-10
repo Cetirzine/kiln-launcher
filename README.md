@@ -35,6 +35,7 @@
 **启动器功能**
 
 - 原版、Fabric、Quilt、Forge、NeoForge 安装（Forge / NeoForge 运行安装器 processors，思路参考 [HMCL](https://github.com/HMCL-dev/HMCL)）
+- 安装 Forge 时可同时加装 OptiFine 与 LiteLoader（只在该游戏版本有对应组件时显示）
 - 离线账号与微软账号（设备代码登录，刷新令牌保存在钥匙串）
 - 自动选择 / 下载 Java（Mojang 官方运行时、Azul Zulu）
 - 版本独立游戏目录、独立 Java / 内存 / 参数设置
