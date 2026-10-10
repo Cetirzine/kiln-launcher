@@ -116,6 +116,10 @@ scripts/               打包脚本与图标生成
 - 启动器数据：`~/Library/Application Support/Kiln`（Java 运行时、账号）
 - 日志：`~/Library/Logs/Kiln`
 
+## 许可
+
+Kiln 以 [PolyForm Strict License 1.0.0](LICENSE.md) 提供：仅限非商业用途使用；不允许分发（包括二次分发、转载安装包）；不允许修改或基于本项目制作衍生作品。
+
 ## 致谢
 
 - 龙腾猫跃 与 [Plain Craft Launcher 2](https://github.com/Meloong-Git/PCL)

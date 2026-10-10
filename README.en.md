@@ -45,6 +45,10 @@ Only the Xcode Command Line Tools are required.
 
 This produces `build/Kiln.app` (arm64, release build).
 
+## License
+
+Kiln is available under the [PolyForm Strict License 1.0.0](LICENSE.md): noncommercial use only; no distribution (including redistributing the app or its source) and no changes or derivative works.
+
 ## Credits
 
 - LTCat (龙腾猫跃) and [Plain Craft Launcher 2](https://github.com/Meloong-Git/PCL)
