@@ -28,7 +28,7 @@ struct AboutPage: View {
                                 .padding(.trailing, 10)
                         }
                     }
-                    Card(T("署名", "Attribution")) {
+                    Card(T("致谢", "Thanks")) {
                         ListItem(systemIcon: "person.fill", title: T("龙腾猫跃", "LTCat (龙腾猫跃)"),
                                  info: T("Plain Craft Launcher 2（PCL2）的作者。本启动器的部分思路受 PCL2 启发。",
                                          "Author of Plain Craft Launcher 2 (PCL2). Some ideas in this launcher were inspired by PCL2.")) {
@@ -38,11 +38,6 @@ struct AboutPage: View {
                                  info: T("一款出色的 Minecraft 启动器。", "An excellent Minecraft launcher.")) {
                             LinkButton(title: "GitHub", url: Links.pcl2)
                         }
-                        Text(T("\(AppInfo.shortName) 是独立开发的项目，与 PCL 及其作者没有关联，也未获得其认可。请勿向 PCL 反馈本软件的问题。",
-                               "\(AppInfo.shortName) is an independent project. It is not affiliated with or endorsed by PCL or its author. Please don't report issues with this software to PCL."))
-                            .font(.system(size: 11.5)).foregroundStyle(Theme.text3).fixedSize(horizontal: false, vertical: true)
-                    }
-                    Card(T("致谢", "Thanks")) {
                         ListItem(systemIcon: "shippingbox.fill", title: "HMCL",
                                  info: T("Forge / NeoForge 安装流程与崩溃分析的实现思路参考了 HMCL。", "The Forge / NeoForge install flow and crash analysis follow approaches used by HMCL.")) {
                             LinkButton(title: "GitHub", url: Links.hmcl)
@@ -63,6 +58,9 @@ struct AboutPage: View {
                         }
                         Text(T("界面布局参考了 Lunar Client。", "The layout is inspired by Lunar Client."))
                             .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
+                        Text(T("\(AppInfo.shortName) 是独立开发的项目，与 PCL 及其作者没有关联，也未获得其认可。请勿向 PCL 反馈本软件的问题。",
+                               "\(AppInfo.shortName) is an independent project. It is not affiliated with or endorsed by PCL or its author. Please don't report issues with this software to PCL."))
+                            .font(.system(size: 11.5)).foregroundStyle(Theme.text3).fixedSize(horizontal: false, vertical: true)
                     }
                     Card(T("法律信息", "Legal")) {
                         Text(T("Minecraft 是 Mojang Studios 的商标。本软件不是 Mojang 或 Microsoft 的官方产品。请购买正版游戏。",
