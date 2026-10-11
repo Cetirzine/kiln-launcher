@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${VERSION:-0.2.5}"
+VERSION="${VERSION:-0.2.6}"
 export VERSION
 ./scripts/build-app.sh
 
