@@ -83,37 +83,53 @@ struct PixelImage: View {
     }
 }
 
-/// 头像缓存：离线账号的本地皮肤、外置登录账号的皮肤
+/// 皮肤与头像缓存：离线账号的本地皮肤或同名正版皮肤、外置登录与微软账号的皮肤
 @MainActor
 final class FaceCache {
     static let shared = FaceCache()
     private var faces: [String: CGImage] = [:]
+    private var skins: [String: (CGImage, Bool)] = [:]
 
-    func face(for account: Account) async -> CGImage? {
-        let key = account.id + (account.skin?.file ?? "") + (account.skin?.premium ?? "")
-        if let f = faces[key] { return f }
-        var skin: CGImage?
+    private func key(_ account: Account) -> String { account.id + (account.skin?.file ?? "") + (account.skin?.premium ?? "") }
+
+    /// 账号当前的皮肤图片，以及是否为纤细手臂模型；取不到时返回 nil（使用默认的史蒂夫）
+    func skin(for account: Account) async -> (CGImage, Bool)? {
+        let k = key(account)
+        if let s = skins[k] { return s }
+        var result: (CGImage, Bool)?
         switch account.kind {
         case .offline:
-            if let file = account.skin?.file { skin = SkinRender.load(Skins.file(file)) }
-            else if let name = account.skin?.premium, let (url, _) = try? await Skins.premium(name) { skin = SkinRender.load(url) }
+            if let file = account.skin?.file, let img = SkinRender.load(Skins.file(file)) { result = (img, account.skin?.slim ?? false) }
+            else if let name = account.skin?.premium, let (url, slim) = try? await Skins.premium(name), let img = SkinRender.load(url) { result = (img, slim) }
         case .yggdrasil:
-            if let root = account.server,
-               let profile = try? await Net.json(urls: [root + "/sessionserver/session/minecraft/profile/\(account.uuid)"]),
-               let value = profile["properties"].array.first(where: { $0["name"].string == "textures" })?["value"].string,
-               let data = Data(base64Encoded: value), let t = try? JSON(data: data),
-               let url = t["textures"]["SKIN"]["url"].string, let png = try? await Net.data([url]) {
-                skin = SkinRender.load(png)
-            }
+            if let root = account.server { result = await Self.profileSkin(root + "/sessionserver/session/minecraft/profile/\(account.uuid)") }
         case .microsoft:
-            break
+            // 正版皮肤是公开的，按 UUID 向 Mojang 查询，不需要登录令牌
+            result = await Self.profileSkin("https://sessionserver.mojang.com/session/minecraft/profile/\(account.uuid.replacingOccurrences(of: "-", with: ""))")
         }
-        guard let skin, let face = SkinRender.face(skin) else { return nil }
-        faces[key] = face
+        if let result { skins[k] = result }
+        return result
+    }
+
+    func face(for account: Account) async -> CGImage? {
+        let k = key(account)
+        if let f = faces[k] { return f }
+        guard let (skin, _) = await skin(for: account), let face = SkinRender.face(skin) else { return nil }
+        faces[k] = face
         return face
     }
 
-    func invalidate() { faces.removeAll() }
+    private static func profileSkin(_ url: String) async -> (CGImage, Bool)? {
+        guard let profile = try? await Net.json(urls: [url]),
+              let value = profile["properties"].array.first(where: { $0["name"].string == "textures" })?["value"].string,
+              let data = Data(base64Encoded: value), let t = try? JSON(data: data),
+              let skinURL = t["textures"]["SKIN"]["url"].string,
+              let png = try? await Net.data([skinURL.replacingOccurrences(of: "http://", with: "https://")]),
+              let img = SkinRender.load(png) else { return nil }
+        return (img, t["textures"]["SKIN"]["metadata"]["model"].string == "slim")
+    }
+
+    func invalidate() { faces.removeAll(); skins.removeAll() }
 }
 
 // MARK: - 外置登录

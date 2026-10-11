@@ -10,7 +10,6 @@ enum Snapshot {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let state = AppState.shared
         state.instances = InstanceScanner.scan(folder ?? LauncherSettings.shared.minecraftURL)
-        if let sel = state.selectedInstance, let img = await Hero.loadPanorama(sel) { Hero.cache[sel.name] = img }
         await BlockTextures.shared.load(from: state.instances)
         let pages: [(String, AppState.Page, AppState.SetupSection?, AppState.DownloadSection?)] = [
             ("home", .home, nil, nil), ("instances", .instances, nil, nil), ("download", .download, nil, .game),

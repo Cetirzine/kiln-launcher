@@ -19,12 +19,13 @@ struct HomePage: View {
     }
 }
 
-/// 主视觉：全幅显示当前版本的标题全景图，界面元素以 HUD 的方式叠在上面
+/// 主视觉：当前版本的横版点阵场景（新地形、新生物与玩家），界面元素以 HUD 的方式叠在上面
 struct Hero: View {
     @Environment(AppState.self) private var state
-    @PState private var panorama: NSImage?
-    /// 已加载的全景图（也用于离屏截图）
-    @MainActor static var cache: [String: NSImage] = [:]
+    /// 场景里的人物：玩家用这个版本启动时所用账号的皮肤（没有自定义皮肤就是史蒂夫），其他角色用作者的皮肤
+    @PState private var cast = SceneCast(player: .steve, author: Hero.authorLook ?? .alex)
+    /// 作者 NelsonPence 的皮肤，第一次用到时从 Mojang 取，之后一直复用
+    @MainActor static var authorLook: PlayerLook?
 
     var body: some View {
         let instance = state.selectedInstance
@@ -75,10 +76,10 @@ struct Hero: View {
             .padding(.bottom, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // 图片放在背景层：由内容决定尺寸，图片按填充模式铺满后裁切
+        // 场景放在背景层：由内容决定尺寸
         .background {
-            if let panorama = panorama ?? instance.flatMap({ Hero.cache[$0.name] }) {
-                Image(nsImage: panorama).resizable().aspectRatio(contentMode: .fill)
+            if let instance {
+                DotSceneView(scene: DotScenes.scene(for: instance.vanillaVersion), cast: cast)
             } else {
                 DirtTexture()
             }
@@ -87,35 +88,27 @@ struct Hero: View {
         .overlay(alignment: .topTrailing) {
             AccountChip(onImage: true).padding(.top, 18).padding(.trailing, 22)
         }
-        .task(id: instance?.name) {
-            if let i = instance, let c = Hero.cache[i.name] { panorama = c; return }
-            panorama = await Hero.loadPanorama(instance)
-            if let i = instance, let p = panorama { Hero.cache[i.name] = p }
+        .task(id: instance.map { $0.name + (AccountStore.shared.account(for: $0.setup)?.id ?? "") }) {
+            if Hero.authorLook == nil, let (url, slim) = try? await Skins.premium("NelsonPence"),
+               let skin = SkinRender.load(url), let look = PlayerLook(skin: skin, slim: slim) {
+                Hero.authorLook = look
+            }
+            cast.author = Hero.authorLook ?? .alex
+            if let i = instance, let account = AccountStore.shared.account(for: i.setup),
+               let (skin, slim) = await FaceCache.shared.skin(for: account), let look = PlayerLook(skin: skin, slim: slim) {
+                cast.player = look
+            } else {
+                cast.player = .steve
+            }
         }
     }
 
     private func archText(_ i: McInstance) -> String {
         i.preferredArch == "arm64" ? T("Apple 芯片原生", "Native on Apple silicon") : T("Rosetta 2", "Rosetta 2")
     }
-
-    /// 从已安装的资源中读取标题界面全景图
-    static func loadPanorama(_ instance: McInstance?) async -> NSImage? {
-        guard let instance else { return nil }
-        return await Task.detached(priority: .utility) {
-            let indexFile = instance.folder.appendingPathComponent("assets/indexes/\(instance.assetIndexId).json")
-            guard let data = try? Data(contentsOf: indexFile), let j = try? JSON(data: data) else { return nil }
-            for n in [0, 1, 3] {
-                if let hash = j["objects"]["minecraft/textures/gui/title/background/panorama_\(n).png"]["hash"].string {
-                    let u = instance.folder.appendingPathComponent("assets/objects/\(hash.prefix(2))/\(hash)")
-                    if let img = NSImage(contentsOf: u) { return img }
-                }
-            }
-            return nil
-        }.value
-    }
 }
 
-/// 没有全景图时的背景：游戏菜单里那种压暗的泥土纹理
+/// 还没有安装游戏时的背景：游戏菜单里那种压暗的泥土纹理
 struct DirtTexture: View {
     var body: some View {
         Canvas { ctx, size in
