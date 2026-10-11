@@ -62,9 +62,6 @@ struct AboutPage: View {
                         }
                         Text(T("界面布局参考了 Lunar Client。", "The layout is inspired by Lunar Client."))
                             .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
-                        Text(T("\(AppInfo.shortName) 是独立开发的项目，与 PCL 及其作者没有关联，也未获得其认可。请勿向 PCL 反馈本软件的问题。",
-                               "\(AppInfo.shortName) is an independent project. It is not affiliated with or endorsed by PCL or its author. Please don't report issues with this software to PCL."))
-                            .font(.system(size: 11.5)).foregroundStyle(Theme.text3).fixedSize(horizontal: false, vertical: true)
                     }
                     Card(T("法律信息", "Legal")) {
                         Text(T("Minecraft 是 Mojang Studios 的商标。本软件不是 Mojang 或 Microsoft 的官方产品。请购买正版游戏。",

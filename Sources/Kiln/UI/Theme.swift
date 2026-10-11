@@ -3,9 +3,9 @@ import AppKit
 import Observation
 import LauncherCore
 
-/// 设计语言：游戏画面是主角，界面像贴在画面上的 HUD。
-/// 中性的石灰色系，跟随系统浅色 / 深色；草绿只用于“开始游戏”。
-/// 圆角按层级区分：整页与主图 0，面板 4，按钮 3，物品栏格子 0。
+/// 设计语言：游戏画面是主角，界面像贴在画面上的 HUD；面板像早期 Mac 的小窗口（黑色标题栏、实线边框、硬阴影），与官网一致。
+/// 中性的石灰色系，跟随系统浅色 / 深色；青金蓝表示选中与焦点；草绿只用于“开始游戏”。
+/// 圆角按层级区分：整页、主图与窗口 0，按钮与输入框 2，物品栏格子 0。
 enum Theme {
     // 跟随系统外观的颜色
     static let bg = dynamic(light: 0xE8E8E6, dark: 0x1B1B1A)          // 画布
@@ -18,16 +18,25 @@ enum Theme {
     static let text2 = dynamic(light: 0x62625E, dark: 0xA2A29C)
     static let text3 = dynamic(light: 0x8E8E89, dark: 0x6F6F6A)
 
-    /// 普通强调（选中、焦点）使用文字色本身，不引入第二种品牌色
-    static let accent = text
-    static let accentDeep = text
-    static let accentSoft = dynamic(light: 0xDCDCD8, dark: 0x343432)
+    /// 窗口的实线边框与标题栏
+    static let edge = dynamic(light: 0x1E1E1D, dark: 0x55554F)
+    static let titleBar = dynamic(light: 0x1E1E1D, dark: 0x0F0F0E)
+    static let titleText = Color(hex: 0xF6F6F5)
+    /// 硬阴影：不模糊，向右下偏移
+    static let hardShadow = dynamic(light: 0x1E1E1D, dark: 0x000000, alpha: (0.22, 0.6))
+
+    /// 选中与焦点：官网与图标里的青金蓝
+    static let accent = dynamic(light: 0x2449CF, dark: 0x8FB3FF)
+    static let accentDeep = dynamic(light: 0x1A2F9C, dark: 0xB7CCFF)
+    static let accentSoft = dynamic(light: 0xDDE5FA, dark: 0x27304A)
 
     /// 草绿：只用于开始游戏
     static let play = Color(hex: 0x3D8B2F)
     static let playEdge = Color(hex: 0x2B6620)
     static let playLight = Color(hex: 0x4FA33F)
 
+    /// 警告对话框的标题栏
+    static let danger = dynamic(light: 0xB8322A, dark: 0x8E2A22)
     static let green = dynamic(light: 0x2F7A24, dark: 0x6CBF5A)
     static let red = dynamic(light: 0xB8322A, dark: 0xF07167)
     static let yellow = dynamic(light: 0x9A6B00, dark: 0xE2B451)
@@ -35,12 +44,12 @@ enum Theme {
     static let accentGradient = LinearGradient(colors: [playLight, play], startPoint: .top, endPoint: .bottom)
     static let shadow = Color.black.opacity(0.0)
 
-    static func dynamic(light: UInt32, dark: UInt32) -> Color {
+    static func dynamic(light: UInt32, dark: UInt32, alpha: (CGFloat, CGFloat) = (1, 1)) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             let hex = isDark ? dark : light
             return NSColor(srgbRed: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
-                           blue: CGFloat(hex & 0xff) / 255, alpha: 1)
+                           blue: CGFloat(hex & 0xff) / 255, alpha: isDark ? alpha.1 : alpha.0)
         })
     }
 
@@ -65,7 +74,7 @@ struct BundleImage: View {
 
 // MARK: - 面板
 
-/// 带标题的面板：平面、发丝线边框、4pt 圆角，不使用阴影
+/// 面板：早期 Mac 的小窗口。有标题时是黑色标题栏，标题栏里的操作按钮用深色样式；实线边框加硬阴影，没有圆角
 struct Card<Content: View>: View {
     var title: String?
     var trailing: AnyView?
@@ -80,21 +89,24 @@ struct Card<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let title {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                HStack(alignment: .center) {
+                    Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.titleText)
+                        .lineLimit(1)
                     Spacer()
-                    trailing
+                    if let trailing { trailing.environment(\.colorScheme, .dark) }
                 }
-                .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
-                Rectangle().fill(Theme.stroke).frame(height: 1)
+                .padding(.leading, 12).padding(.trailing, 6)
+                .frame(minHeight: 30)
+                .padding(.vertical, trailing == nil ? 0 : 4)
+                .background(Theme.titleBar)
             }
             VStack(alignment: .leading, spacing: 12, content: content)
                 .padding(16)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.panel)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.stroke))
+        .overlay(Rectangle().strokeBorder(Theme.edge, lineWidth: 1.5))
+        .background(Rectangle().fill(Theme.hardShadow).offset(x: 3, y: 3))
     }
 }
 
@@ -129,20 +141,24 @@ struct KilnButtonStyle: ButtonStyle {
                 .foregroundStyle(foreground)
                 .padding(.horizontal, 12)
                 .frame(minHeight: 28)
-                .background(background, in: RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3).stroke(border))
+                .background(background, in: RoundedRectangle(cornerRadius: 2))
                 // 主按钮底部的深色边，呼应游戏里按钮的厚度
                 .overlay(alignment: .bottom) {
                     if kind == .highlight {
-                        Rectangle().fill(Theme.playEdge).frame(height: configuration.isPressed ? 0 : 2)
-                            .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 3, bottomTrailingRadius: 3))
+                        Rectangle().fill(Theme.playEdge).frame(height: pressed ? 0 : 2)
                     }
                 }
-                .offset(y: kind == .highlight && configuration.isPressed ? 1 : 0)
+                .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(border, lineWidth: 1))
+                // 硬阴影；按下时按钮陷进阴影里
+                .background(RoundedRectangle(cornerRadius: 2).fill(enabled ? Theme.hardShadow : .clear)
+                    .offset(x: pressed ? 0 : 2, y: pressed ? 0 : 2))
+                .offset(x: pressed ? 2 : 0, y: pressed ? 2 : 0)
                 .opacity(enabled ? 1 : 0.45)
                 .onHover { hover = $0 }
                 .contentShape(Rectangle())
         }
+
+        private var pressed: Bool { configuration.isPressed && enabled }
 
         private var foreground: Color {
             switch kind {
@@ -161,7 +177,7 @@ struct KilnButtonStyle: ButtonStyle {
         }
 
         private var border: Color {
-            kind == .highlight ? .clear : Theme.stroke
+            kind == .highlight ? Theme.playEdge : Theme.edge
         }
     }
 }
@@ -183,7 +199,7 @@ struct IconButton: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(hover ? Theme.text : Theme.text2)
                 .frame(width: 28, height: 28)
-                .background(RoundedRectangle(cornerRadius: 3).fill(hover ? Theme.panelHover : Color.clear))
+                .background(RoundedRectangle(cornerRadius: 2).fill(hover ? Theme.panelHover : Color.clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -233,7 +249,7 @@ struct ListItem<Trailing: View>: View {
         .padding(.vertical, 7)
         .background(selected ? Theme.accentSoft : (hover && action != nil ? Theme.panel2 : Color.clear))
         .overlay(alignment: .leading) {
-            if selected { Rectangle().fill(Theme.text).frame(width: 2) }
+            if selected { Rectangle().fill(Theme.accent).frame(width: 3) }
         }
         .contentShape(Rectangle())
         .onHover { hover = $0 }
@@ -260,7 +276,7 @@ struct SegmentBar<T: Hashable>: View {
                         ZStack {
                             Rectangle().fill(Color.clear).frame(height: 2)
                             if selected {
-                                Rectangle().fill(Theme.text).frame(height: 2).matchedGeometryEffect(id: "underline", in: ns)
+                                Rectangle().fill(Theme.accent).frame(height: 3).matchedGeometryEffect(id: "underline", in: ns)
                             }
                         }
                     }
@@ -295,8 +311,8 @@ struct Segmented<T: Hashable>: View {
         }
         .padding(2)
         .frame(height: 28)
-        .background(Theme.panel2, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.stroke))
+        .background(Theme.panel2, in: Rectangle())
+        .overlay(Rectangle().strokeBorder(Theme.stroke, lineWidth: 1))
         .fixedSize(horizontal: segmentWidth != nil, vertical: true)
     }
 
@@ -311,14 +327,12 @@ struct Segmented<T: Hashable>: View {
             Button(action: action) {
                 Text(title)
                     .font(.system(size: 12, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? Theme.text : Theme.text2)
+                    .foregroundStyle(selected ? Theme.titleText : Theme.text2)
                     .lineLimit(1).minimumScaleFactor(0.8)
                     .padding(.horizontal, 4)
                     .frame(width: width).frame(maxWidth: width == nil ? .infinity : nil, maxHeight: .infinity)
                     .background {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(selected ? Theme.panel : hover ? Theme.panelHover : Color.clear)
-                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(selected ? Theme.stroke : Color.clear))
+                        Rectangle().fill(selected ? Theme.titleBar : hover ? Theme.panelHover : Color.clear)
                     }
                     .contentShape(Rectangle())
             }
@@ -347,8 +361,8 @@ struct SearchField: View {
             }
         }
         .padding(.horizontal, 9).frame(height: 28)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.stroke))
+        .background(Theme.panel, in: Rectangle())
+        .overlay(Rectangle().strokeBorder(Theme.edge, lineWidth: 1))
     }
 }
 
@@ -467,9 +481,9 @@ private struct HintCard: View {
         }
         .padding(.leading, 12).padding(.trailing, 8).padding(.vertical, 9)
         .frame(width: 320, alignment: .leading)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.stroke))
-        .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
+        .background(Theme.panel, in: Rectangle())
+        .overlay(Rectangle().strokeBorder(Theme.edge, lineWidth: 1.5))
+        .background(Rectangle().fill(Theme.hardShadow).offset(x: 3, y: 3))
         .onHover { h in
             hover = h
             Hint.shared.hovering = h ? item.id : (Hint.shared.hovering == item.id ? nil : Hint.shared.hovering)
@@ -537,9 +551,12 @@ struct MsgBoxOverlay: View {
         ZStack {
             if let item = box.queue.first {
                 Color.black.opacity(0.32).ignoresSafeArea().transition(.opacity)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(item.title).font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.titleText).lineLimit(1)
+                        .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                        .background(item.warn ? Theme.danger : Theme.titleBar)
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(item.title).font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(item.warn ? Theme.red : Theme.text)
                     PageScroll {
                         Text(item.content).font(.system(size: 13)).foregroundStyle(Theme.text2)
                             .lineSpacing(3)
@@ -564,10 +581,11 @@ struct MsgBoxOverlay: View {
                     .padding(.top, 4)
                 }
                 .padding(20)
+                }
                 .frame(width: 440)
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.stroke))
-                .shadow(color: .black.opacity(0.25), radius: 24, y: 10)
+                .background(Theme.panel, in: Rectangle())
+                .overlay(Rectangle().strokeBorder(Theme.edge, lineWidth: 1.5))
+                .background(Rectangle().fill(Theme.hardShadow).offset(x: 6, y: 6))
                 .transition(.opacity)
                 .id(item.id)
                 .onAppear { text = item.input ?? "" }

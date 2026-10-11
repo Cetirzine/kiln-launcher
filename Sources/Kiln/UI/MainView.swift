@@ -11,6 +11,7 @@ struct MainView: View {
             Sidebar()
             ZStack(alignment: .top) {
                 Theme.bg
+                DotGrid()
                 content
                     .transition(.opacity)
                     .id(pageKey)
@@ -133,7 +134,7 @@ struct SidebarButton: View {
             .foregroundStyle(selected || hover ? Theme.text : Theme.text2)
             .frame(width: 76, height: 50)
             .overlay(alignment: .leading) {
-                if selected { Rectangle().fill(Theme.text).frame(width: 2, height: 30) }
+                if selected { Rectangle().fill(Theme.accent).frame(width: 3, height: 30) }
             }
             .contentShape(Rectangle())
         }
@@ -149,12 +150,34 @@ struct Logo: View {
     }
 }
 
+/// 画布上很淡的点阵，和官网“桌面”的底纹一致；面板有实底，不影响阅读
+struct DotGrid: View {
+    var spacing: CGFloat = 6
+    var body: some View {
+        Canvas { ctx, size in
+            var path = Path()
+            var y: CGFloat = spacing / 2
+            while y < size.height {
+                var x: CGFloat = spacing / 2
+                while x < size.width {
+                    path.addRect(CGRect(x: x, y: y, width: 1, height: 1))
+                    x += spacing
+                }
+                y += spacing
+            }
+            ctx.fill(path, with: .color(Theme.text.opacity(0.09)))
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 struct BarProgressStyle: ProgressViewStyle {
     func makeBody(configuration: Configuration) -> some View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
                 Rectangle().fill(Theme.stroke)
-                Rectangle().fill(Theme.text).frame(width: g.size.width * (configuration.fractionCompleted ?? 0))
+                Rectangle().fill(Theme.accent).frame(width: g.size.width * (configuration.fractionCompleted ?? 0))
             }
         }
     }
