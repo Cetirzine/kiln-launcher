@@ -321,15 +321,25 @@ struct AccountChip: View {
 /// 玩家头像：通过 mc-heads.net 获取（离线账号按名称获取同名正版玩家的皮肤，没有则为默认皮肤）
 struct Avatar: View {
     let account: Account?
+    @PState private var face: CGImage?
     var body: some View {
         Group {
-            if let a = account, let url = Avatar.url(a) {
+            if let face {
+                Image(decorative: face, scale: 1).resizable().interpolation(.none)
+            } else if let a = account, a.kind == .yggdrasil || a.skin?.file != nil {
+                placeholder
+            } else if let a = account, let url = Avatar.url(a) {
                 AsyncImage(url: url) { img in img.resizable().interpolation(.none) } placeholder: { placeholder }
             } else {
                 placeholder
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 2))
+        .task(id: (account?.id ?? "") + (account?.skin?.file ?? "") + (account?.skin?.premium ?? "")) {
+            face = nil
+            guard let a = account, a.kind == .yggdrasil || a.skin?.file != nil else { return }
+            face = await FaceCache.shared.face(for: a)
+        }
     }
 
     private var placeholder: some View {
@@ -338,7 +348,8 @@ struct Avatar: View {
     }
 
     static func url(_ a: Account) -> URL? {
-        let id = a.kind == .microsoft ? a.uuid : a.name
+        // 离线账号：使用同名（或所选）正版玩家的头像
+        let id = a.kind == .microsoft ? a.uuid : (a.skin?.premium ?? a.name)
         return URL(string: "https://mc-heads.net/avatar/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)/64")
     }
 }
@@ -351,6 +362,9 @@ struct AccountPopover: View {
     @PState private var msLogin = false
     @PState private var renaming: String?
     @PState private var newName = ""
+    @PState private var yggLogin = false
+    @PState private var yggAccount: Account?
+    @PState private var skinAccount: Account?
 
     var body: some View {
         let instance = state.selectedInstance
@@ -379,7 +393,10 @@ struct AccountPopover: View {
                                    pinnedHere: acc.id == pinned?.id, instance: instance,
                                    onSelect: { store.select(acc); state.showAccounts = false },
                                    onRename: { newName = acc.name; renaming = acc.id },
-                                   onRelogin: { msLogin = true },
+                                   onRelogin: {
+                                       if acc.kind == .yggdrasil { yggAccount = acc; yggLogin = true } else { msLogin = true }
+                                   },
+                                   onSkin: { skinAccount = acc },
                                    onDelete: { delete(acc) })
                     }
                 }
@@ -401,14 +418,22 @@ struct AccountPopover: View {
                     Label(T("微软账号登录", "Sign in with Microsoft"), systemImage: "person.badge.key.fill")
                 }
                 .buttonStyle(.kilnPrimary)
-                Spacer()
-                Button(T("购买 Minecraft", "Buy Minecraft")) { Links.open(Links.buyMinecraft) }
-                    .buttonStyle(.plain).foregroundStyle(Theme.accent).font(.system(size: 12))
+                .fixedSize()
+                Button(T("外置登录", "Third-party")) { yggAccount = nil; yggLogin = true }
+                    .buttonStyle(.kiln).fixedSize()
+                    .help(T("LittleSkin 等 authlib-injector 皮肤站", "LittleSkin and other authlib-injector skin sites"))
+                Spacer(minLength: 0)
             }
+            Button(T("购买 Minecraft", "Buy Minecraft")) { Links.open(Links.buyMinecraft) }
+                .buttonStyle(.plain).foregroundStyle(Theme.accent).font(.system(size: 12))
         }
         .padding(16)
         .frame(width: 330)
         .sheet(isPresented: $msLogin) { MicrosoftLoginSheet(show: $msLogin) }
+        .sheet(isPresented: $yggLogin) { YggdrasilLoginSheet(account: yggAccount, show: $yggLogin) }
+        .sheet(item: $skinAccount) { acc in
+            SkinSheet(account: acc, show: Binding(get: { skinAccount != nil }, set: { if !$0 { skinAccount = nil } }))
+        }
     }
 
     private func renameRow(_ acc: Account) -> some View {
@@ -480,12 +505,13 @@ private struct AccountRow: View {
     let onSelect: () -> Void
     let onRename: () -> Void
     let onRelogin: () -> Void
+    var onSkin: () -> Void = {}
     let onDelete: () -> Void
     @Environment(AppState.self) private var state
 
     var body: some View {
-        ListItem(systemIcon: account.kind == .microsoft ? "checkmark.seal.fill" : "person.fill", title: account.name,
-                 info: account.needsLogin == true ? T("微软账号 · 需要重新登录", "Microsoft · needs to sign in again") : account.typeText,
+        ListItem(systemIcon: account.kind == .microsoft ? "checkmark.seal.fill" : account.kind == .yggdrasil ? "globe" : "person.fill", title: account.name,
+                 info: account.needsLogin == true ? account.typeText + T(" · 需要重新登录", " · needs to sign in again") : account.typeText,
                  selected: current,
                  action: { if account.needsLogin == true { onRelogin() } else { onSelect() } }) {
             if account.needsLogin == true {
@@ -511,10 +537,11 @@ private struct AccountRow: View {
                 }
             }
             Divider()
-            if account.kind == .microsoft {
-                Button(T("重新登录…", "Sign in again…")) { onRelogin() }
-            } else {
+            Button(T("皮肤…", "Skin…")) { onSkin() }
+            if account.kind == .offline {
                 Button(T("修改名称…", "Rename…")) { onRename() }
+            } else {
+                Button(T("重新登录…", "Sign in again…")) { onRelogin() }
             }
             Button(T("复制 UUID", "Copy UUID")) {
                 NSPasteboard.general.clearContents()

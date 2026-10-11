@@ -56,6 +56,10 @@ struct AboutPage: View {
                                  info: T("CurseForge 上的 Mod 与资源；MCIM 提供了无需密钥的社区镜像。", "Mods and resources on CurseForge; MCIM provides a community mirror that needs no API key.")) {
                             LinkButton(title: "MCIM", url: "https://mod.mcimirror.top")
                         }
+                        ListItem(systemIcon: "person.badge.key.fill", title: "authlib-injector（yushijinhun）",
+                                 info: T("外置登录与离线皮肤；在需要时下载，不随应用分发。", "Third-party login and offline skins; downloaded when needed, not bundled.")) {
+                            LinkButton(title: "GitHub", url: "https://github.com/yushijinhun/authlib-injector")
+                        }
                         Text(T("界面布局参考了 Lunar Client。", "The layout is inspired by Lunar Client."))
                             .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
                         Text(T("\(AppInfo.shortName) 是独立开发的项目，与 PCL 及其作者没有关联，也未获得其认可。请勿向 PCL 反馈本软件的问题。",

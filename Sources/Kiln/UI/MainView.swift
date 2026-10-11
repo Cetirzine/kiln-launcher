@@ -20,6 +20,24 @@ struct MainView: View {
         // 切换语言后重建界面
         .id(settings.language)
         .overlay { HintOverlay() }
+        .sheet(item: Binding(get: { state.modpackInstall }, set: { state.modpackInstall = $0 })) { s in
+            ModpackInstallSheet(source: s).environment(state)
+        }
+        .sheet(isPresented: Binding(get: { !state.manualDownloads.isEmpty }, set: { if !$0 { state.manualDownloads = [] } })) {
+            ManualDownloadsSheet().environment(state)
+        }
+        // 把整合包拖到窗口上即可安装
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            guard let p = providers.first else { return false }
+            _ = p.loadObject(ofClass: URL.self) { url, _ in
+                guard let url, ["mrpack", "zip"].contains(url.pathExtension.lowercased()) else { return }
+                Task { @MainActor in
+                    if (try? Modpack.inspect(url)) != nil { AppState.shared.modpackInstall = .file(url) }
+                    else { Hint.show(T("不是支持的整合包", "Not a supported modpack"), .red) }
+                }
+            }
+            return true
+        }
         .overlay { MsgBoxOverlay() }
         .background(WindowAccessor())
         .ignoresSafeArea(.container, edges: .top)

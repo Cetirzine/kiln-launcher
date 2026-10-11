@@ -15,6 +15,7 @@ enum Snapshot {
         let pages: [(String, AppState.Page, AppState.SetupSection?, AppState.DownloadSection?)] = [
             ("home", .home, nil, nil), ("instances", .instances, nil, nil), ("download", .download, nil, .game),
             ("download-mod", .download, nil, .mod),
+            ("download-modpack", .download, nil, .modpack),
             ("settings-performance", .setup, .performance, nil), ("settings-other", .setup, .other, nil), ("about", .about, nil, nil),
         ]
         if let first = state.instances.first {
@@ -25,6 +26,38 @@ enum Snapshot {
                let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
                 try? png.write(to: dir.appendingPathComponent("icon-picker.png"))
             }
+        }
+        // 新功能的界面
+        func render<V: View>(_ name: String, _ view: V, width: CGFloat? = nil, height: CGFloat? = nil) {
+            let r = ImageRenderer(content: view.environment(state).environment(\.snapshotMode, true)
+                .frame(width: width, height: height).background(Theme.bg))
+            r.scale = 2
+            if let img = r.nsImage, let tiff = img.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: dir.appendingPathComponent("\(name).png"))
+            }
+        }
+        if let pack = state.instances.first(where: { $0.name.contains("modpack") }) ?? state.instances.first {
+            render("instance-mods", InstanceSetupPage(instance: pack, tab: .mods), width: 1040, height: 680)
+            render("instance-worlds", InstanceSetupPage(instance: pack, tab: .worlds), width: 1040, height: 680)
+            render("instance-resourcepacks", InstanceSetupPage(instance: pack, tab: .resourcepacks), width: 1040, height: 680)
+            render("instance-overview", InstanceSetupPage(instance: pack, tab: .overview), width: 1040, height: 680)
+            render("sheet-export", ModpackExportSheet(instance: pack).background(Theme.panel))
+            render("sheet-rename", InstanceNameSheet(instance: pack, mode: .duplicate).background(Theme.panel))
+        }
+        state.manualDownloads = [Modpack.ManualFile(title: "ServerCore", fileName: "servercore-1.3.5-1.19.4.jar",
+                                                     pageURL: "https://www.curseforge.com", destination: URL(fileURLWithPath: "/tmp/x"), sha1: nil)]
+        render("sheet-manual", ManualDownloadsSheet().background(Theme.panel))
+        state.manualDownloads = []
+        render("sheet-ygg", YggdrasilLoginSheet(show: .constant(true)).background(Theme.panel))
+        var demo = Account(kind: .offline, name: "KilnSkin", uuid: Account.offlineUUID("KilnSkin"))
+        demo.skin = Account.OfflineSkin(premium: "jeb_")
+        render("sheet-skin", SkinSheet(account: demo, show: .constant(true)).background(Theme.panel))
+        if let (url, slim) = try? await Skins.premium("jeb_"), let skin = SkinRender.load(url) {
+            render("skin-render", HStack(spacing: 20) {
+                PixelImage(image: SkinRender.face(skin)).frame(width: 64, height: 64)
+                PixelImage(image: SkinRender.front(skin, slim: slim)).frame(width: 80, height: 160)
+            }.padding(20))
         }
         for scheme in [ColorScheme.light, .dark] {
             let renderer = ImageRenderer(content: AccountPopover().environment(state).environment(\.colorScheme, scheme)

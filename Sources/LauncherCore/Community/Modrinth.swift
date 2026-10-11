@@ -5,13 +5,14 @@ package enum Modrinth {
     package static let api = "https://api.modrinth.com/v2"
 
     package enum ProjectType: String, CaseIterable, Identifiable {
-        case mod, resourcepack, shader
+        case mod, resourcepack, shader, modpack
         package var id: String { rawValue }
         package var title: String {
             switch self {
             case .mod: return "Mod"
             case .resourcepack: return T("资源包", "Resource packs")
             case .shader: return T("光影", "Shaders")
+            case .modpack: return T("整合包", "Modpacks")
             }
         }
         package var folder: String {
@@ -19,6 +20,7 @@ package enum Modrinth {
             case .mod: return "mods"
             case .resourcepack: return "resourcepacks"
             case .shader: return "shaderpacks"
+            case .modpack: return ""
             }
         }
     }
@@ -52,6 +54,17 @@ package enum Modrinth {
         package let published: Date
         /// 作者禁止第三方下载（CurseForge），需要到网站手动下载
         package var blocked = false
+        /// 所属项目（Modrinth 项目 ID，CurseForge 为 "cf-<modId>"）
+        package var projectId = ""
+        package var dependencies: [Dependency] = []
+        package var source: Source = .modrinth
+    }
+
+    /// 依赖：必需的前置，或可选的联动
+    package struct Dependency: Hashable, Sendable {
+        package let projectId: String
+        package let versionId: String?
+        package let required: Bool
     }
 
     private static func encode(_ v: String) -> String {
@@ -68,7 +81,7 @@ package enum Modrinth {
         var facets = ["[\"project_type:\(type.rawValue)\"]"]
         if let gameVersion, !gameVersion.isEmpty { facets.append("[\"versions:\(gameVersion)\"]") }
         // 同一层中的多个条件为“或”：Quilt 同时包含 Fabric Mod
-        if type == .mod, let loader, !loader.isEmpty {
+        if type == .mod || type == .modpack, let loader, !loader.isEmpty {
             facets.append("[" + compatibleLoaders(loader).map { "\"categories:\($0)\"" }.joined(separator: ",") + "]")
         }
         let url = "\(api)/search?query=\(encode(query))&limit=30&offset=\(offset)&index=relevance&facets=\(encode("[" + facets.joined(separator: ",") + "]"))"
@@ -109,18 +122,72 @@ package enum Modrinth {
         }
         if !q.isEmpty { url += "?" + q.joined(separator: "&") }
         let j = try await Net.json(urls: [url])
+        return j.array.compactMap(version)
+    }
+
+    /// 单个版本
+    package static func version(id: String) async throws -> Version? {
+        version(try await Net.json(urls: ["\(api)/version/\(id)"]))
+    }
+
+    /// 解析 Modrinth 的版本对象
+    package static func version(_ v: JSON) -> Version? {
+        let files = v["files"].array
+        guard let id = v["id"].string, let file = files.first(where: { $0["primary"].bool == true }) ?? files.first,
+              let fileURL = file["url"].string else { return nil }
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return j.array.compactMap { v in
-            let files = v["files"].array
-            guard let id = v["id"].string, let file = files.first(where: { $0["primary"].bool == true }) ?? files.first,
-                  let fileURL = file["url"].string else { return nil }
-            return Version(id: id, name: v["name"].string ?? "", number: v["version_number"].string ?? "",
-                           gameVersions: v["game_versions"].array.compactMap(\.string),
-                           loaders: v["loaders"].array.compactMap(\.string),
-                           fileURL: fileURL, fileName: file["filename"].string ?? URL(string: fileURL)!.lastPathComponent,
-                           sha1: file["hashes"]["sha1"].string, size: file["size"].double.map { Int64($0) },
-                           published: iso.date(from: v["date_published"].string ?? "") ?? Date(timeIntervalSince1970: 0))
+        var r = Version(id: id, name: v["name"].string ?? "", number: v["version_number"].string ?? "",
+                        gameVersions: v["game_versions"].array.compactMap(\.string),
+                        loaders: v["loaders"].array.compactMap(\.string),
+                        fileURL: fileURL, fileName: file["filename"].string ?? URL(string: fileURL)?.lastPathComponent ?? id,
+                        sha1: file["hashes"]["sha1"].string, size: file["size"].double.map { Int64($0) },
+                        published: iso.date(from: v["date_published"].string ?? "") ?? Date(timeIntervalSince1970: 0))
+        r.projectId = v["project_id"].string ?? ""
+        r.dependencies = v["dependencies"].array.compactMap { d in
+            guard let type = d["dependency_type"].string, type == "required" || type == "optional" else { return nil }
+            guard let pid = d["project_id"].string else { return nil }
+            return Dependency(projectId: pid, versionId: d["version_id"].string, required: type == "required")
         }
+        return r
+    }
+
+    /// 按 SHA-1 查找文件对应的版本（一次请求查询多个文件）
+    package static func versionsByHash(_ sha1s: [String]) async throws -> [String: JSON] {
+        guard !sha1s.isEmpty else { return [:] }
+        let body = JSON.object(["hashes": .array(sha1s.map(JSON.string)), "algorithm": .string("sha1")]).data(pretty: false)
+        let (code, j) = try await Net.request("\(api)/version_files", body: body, contentType: "application/json")
+        guard code == 200 else { throw LauncherError("Modrinth HTTP \(code)") }
+        return j.object
+    }
+
+    /// 按 SHA-1 查询每个文件在指定游戏版本与加载器下的最新版本
+    package static func latestByHash(_ sha1s: [String], gameVersion: String, loader: String?) async throws -> [String: Version] {
+        guard !sha1s.isEmpty else { return [:] }
+        var body: [String: JSON] = ["hashes": .array(sha1s.map(JSON.string)), "algorithm": .string("sha1"),
+                                    "game_versions": .array([.string(gameVersion)])]
+        if let loader { body["loaders"] = .array(compatibleLoaders(loader).map(JSON.string)) }
+        let (code, j) = try await Net.request("\(api)/version_files/update", body: JSON.object(body).data(pretty: false),
+                                              contentType: "application/json")
+        guard code == 200 else { throw LauncherError("Modrinth HTTP \(code)") }
+        return j.object.compactMapValues(version)
+    }
+
+    /// 按 ID 批量获取项目信息
+    package static func projects(ids: [String]) async throws -> [Project] {
+        guard !ids.isEmpty else { return [] }
+        var result: [Project] = []
+        // URL 长度有限，分批查询
+        for chunk in stride(from: 0, to: ids.count, by: 80).map({ Array(ids[$0..<min($0 + 80, ids.count)]) }) {
+            let list = "[" + chunk.map { "\"\($0)\"" }.joined(separator: ",") + "]"
+            let j = try await Net.json(urls: ["\(api)/projects?ids=\(encode(list))"])
+            result += j.array.compactMap { p in
+                guard let id = p["id"].string, let slug = p["slug"].string else { return nil }
+                return Project(id: id, slug: slug, title: p["title"].string ?? slug, description: p["description"].string ?? "",
+                               iconURL: p["icon_url"].string.flatMap(URL.init(string:)), downloads: p["downloads"].int ?? 0,
+                               categories: p["categories"].array.compactMap(\.string))
+            }
+        }
+        return result
     }
 }

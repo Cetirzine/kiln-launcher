@@ -32,6 +32,7 @@ struct KilnApp: App {
                     .keyboardShortcut("l", modifiers: .command)
                 Button(T("版本", "Instances")) { state.subPage = nil; state.page = .instances }
                     .keyboardShortcut("i", modifiers: .command)
+                Button(T("安装整合包…", "Install Modpack…")) { ModpackActions.chooseFile() }
                 Button(T("打开游戏文件夹", "Open game folder")) { NSWorkspace.shared.open(LauncherSettings.shared.minecraftURL) }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
                 Divider()
@@ -93,7 +94,7 @@ final class AppState {
             }
         }
     }
-    enum DownloadSection: Hashable { case game, mod, resourcepack, shader, manager }
+    enum DownloadSection: Hashable { case game, mod, modpack, resourcepack, shader, manager }
     enum SetupSection: Hashable { case game, performance, java, download, other }
 
     var page: Page = .home { didSet { if page != oldValue { refreshInstances() } } }
@@ -118,6 +119,13 @@ final class AppState {
     var selectedInstance: McInstance? {
         instances.first { $0.name == LauncherSettings.shared.selectedInstance } ?? instances.first { $0.category != .error }
     }
+
+    // MARK: 整合包
+
+    /// 待安装的整合包（显示安装窗口）
+    var modpackInstall: ModpackSource?
+    /// 整合包中需要手动下载的文件
+    var manualDownloads: [Modpack.ManualFile] = []
 
     // MARK: 账号
 

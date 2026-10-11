@@ -3,20 +3,46 @@ import Observation
 import Security
 
 package struct Account: Codable, Identifiable, Hashable {
-    package enum Kind: String, Codable { case offline, microsoft }
-    package var id: String { "\(kind.rawValue):\(uuid)" }
+    package enum Kind: String, Codable { case offline, microsoft, yggdrasil }
+    package var id: String {
+        // 同一个 UUID 可能出现在不同的皮肤站上
+        kind == .yggdrasil ? "yggdrasil:\(uuid)@\(URL(string: server ?? "")?.host ?? "")" : "\(kind.rawValue):\(uuid)"
+    }
     package var kind: Kind
     package var name: String
     package var uuid: String
-    /// 微软账号的登录已失效（刷新令牌被撤销或过期），需要重新登录
+    /// 登录已失效（刷新令牌被撤销或过期），需要重新登录
     package var needsLogin: Bool?
+    /// 外置登录：认证服务器 API 地址与名称
+    package var server: String?
+    package var serverName: String?
+    /// 外置登录：登录时使用的账号（邮箱或用户名），方便重新登录时填写；不保存密码
+    package var loginName: String?
+    /// 离线账号的皮肤
+    package var skin: OfflineSkin?
+
+    package struct OfflineSkin: Codable, Hashable, Sendable {
+        /// 导入的皮肤文件名（保存在 Kiln 的 skins 文件夹）
+        package var file: String?
+        package var slim = false
+        /// 使用同名正版玩家的皮肤
+        package var premium: String?
+        package init(file: String? = nil, slim: Bool = false, premium: String? = nil) {
+            self.file = file; self.slim = slim; self.premium = premium
+        }
+        package var isEmpty: Bool { file == nil && premium == nil }
+    }
 
     package init(kind: Kind, name: String, uuid: String) {
         self.kind = kind; self.name = name; self.uuid = uuid
     }
 
     package var typeText: String {
-        kind == .microsoft ? T("微软账号", "Microsoft") : T("离线账号", "Offline")
+        switch kind {
+        case .microsoft: return T("微软账号", "Microsoft")
+        case .offline: return T("离线账号", "Offline")
+        case .yggdrasil: return serverName ?? T("外置登录", "Third-party")
+        }
     }
 
     /// 与原版服务端一致的离线 UUID（UUID v3，"OfflinePlayer:" + 玩家名）
@@ -35,6 +61,8 @@ package struct LoginResult {
     package var accessToken: String
     package var userType: String
     package var xuid: String = "0"
+    /// 额外的 JVM 参数（authlib-injector）
+    package var jvmArgs: [String] = []
 
     package init(name: String, uuid: String, accessToken: String, userType: String, xuid: String = "0") {
         self.name = name; self.uuid = uuid; self.accessToken = accessToken; self.userType = userType; self.xuid = xuid
@@ -94,7 +122,8 @@ package final class AccountStore {
     @discardableResult
     package func renameOffline(_ acc: Account, to name: String) -> Account? {
         guard acc.kind == .offline, let i = accounts.firstIndex(where: { $0.id == acc.id }) else { return nil }
-        let renamed = Account(kind: .offline, name: name, uuid: Account.offlineUUID(name))
+        var renamed = Account(kind: .offline, name: name, uuid: Account.offlineUUID(name))
+        renamed.skin = acc.skin
         if renamed.id != acc.id && accounts.contains(where: { $0.id == renamed.id }) { return nil }
         let wasSelected = selected?.id == acc.id
         accounts[i] = renamed
@@ -127,6 +156,7 @@ package final class AccountStore {
     package func remove(_ acc: Account) {
         accounts.removeAll { $0.id == acc.id }
         if acc.kind == .microsoft { Keychain.delete(acc.uuid) }
+        if acc.kind == .yggdrasil { Keychain.delete(Self.yggKey(acc)) }
         if selectedId == acc.id { selectedId = accounts.first?.id }
         save()
     }
@@ -151,11 +181,84 @@ package final class AccountStore {
         save()
     }
 
+    // MARK: 外置登录
+
+    static func yggKey(_ acc: Account) -> String { "yggdrasil|\(acc.id)" }
+
+    private func yggTokens(_ acc: Account) -> (access: String, client: String)? {
+        guard let s = Keychain.get(Self.yggKey(acc)), let j = try? JSON(data: Data(s.utf8)),
+              let a = j["accessToken"].string, let c = j["clientToken"].string else { return nil }
+        return (a, c)
+    }
+
+    private func saveYggTokens(_ acc: Account, access: String, client: String) {
+        let j = JSON.object(["accessToken": .string(access), "clientToken": .string(client)])
+        Keychain.set(String(decoding: j.data(pretty: false), as: UTF8.self), for: Self.yggKey(acc))
+    }
+
+    /// 添加（或重新登录）外置登录账号
+    package func addYggdrasil(root: String, serverName: String, loginName: String, profile: Yggdrasil.Profile,
+                              accessToken: String, clientToken: String) {
+        var acc = Account(kind: .yggdrasil, name: profile.name, uuid: profile.id)
+        acc.server = root
+        acc.serverName = serverName
+        acc.loginName = loginName
+        if let i = accounts.firstIndex(where: { $0.id == acc.id }) { accounts[i] = acc } else { accounts.insert(acc, at: 0) }
+        saveYggTokens(acc, access: accessToken, client: clientToken)
+        selectedId = acc.id
+        save()
+    }
+
+    /// 设置离线账号的皮肤
+    package func setSkin(_ acc: Account, _ skin: Account.OfflineSkin?) {
+        guard let i = accounts.firstIndex(where: { $0.id == acc.id }) else { return }
+        accounts[i].skin = (skin?.isEmpty ?? true) ? nil : skin
+        save()
+    }
+
     /// 启动前登录
     package func login(_ acc: Account) async throws -> LoginResult {
         switch acc.kind {
         case .offline:
-            return LoginResult(name: acc.name, uuid: acc.uuid, accessToken: acc.uuid, userType: "legacy")
+            var r = LoginResult(name: acc.name, uuid: acc.uuid, accessToken: acc.uuid, userType: "legacy")
+            if let skin = acc.skin, !skin.isEmpty {
+                // 自定义皮肤：本地皮肤服务 + authlib-injector；失败时不影响启动，只是不显示皮肤
+                do {
+                    var file = skin.file.map(Skins.file)
+                    var slim = skin.slim
+                    if let name = skin.premium { (file, slim) = try await Skins.premium(name) }
+                    let root = try SkinServer.shared.start()
+                    SkinServer.shared.register(uuid: acc.uuid, name: acc.name, skin: file, slim: slim)
+                    r.jvmArgs = try await AuthlibInjector.jvmArgs(root: root, meta: SkinServer.shared.metadata)
+                } catch {
+                    log("[Skin] 无法启用离线皮肤：\(error.friendly)")
+                }
+            }
+            return r
+        case .yggdrasil:
+            guard let root = acc.server, var tokens = yggTokens(acc) else {
+                setNeedsLogin(acc, true)
+                throw LauncherError(T("外置登录已失效，请重新登录。", "Your third-party login expired. Please sign in again."))
+            }
+            if !(await Yggdrasil.validate(root: root, accessToken: tokens.access, clientToken: tokens.client)) {
+                do {
+                    let s = try await Yggdrasil.refresh(root: root, accessToken: tokens.access, clientToken: tokens.client)
+                    tokens = (s.accessToken, s.clientToken)
+                    saveYggTokens(acc, access: s.accessToken, client: s.clientToken)
+                    if let name = s.selected?.name, !name.isEmpty, name != acc.name, let i = accounts.firstIndex(where: { $0.id == acc.id }) {
+                        accounts[i].name = name
+                        save()
+                    }
+                } catch {
+                    if !Net.isTransient(error) { setNeedsLogin(acc, true) }
+                    throw LauncherError(T("外置登录已失效，请重新输入密码登录。", "Your third-party login expired. Sign in again with your password.") + "\n" + error.friendly)
+                }
+            }
+            if acc.needsLogin == true { setNeedsLogin(acc, false) }
+            let meta = try? await Net.json(urls: [root])
+            var r = LoginResult(name: account(id: acc.id)?.name ?? acc.name, uuid: acc.uuid, accessToken: tokens.access, userType: "mojang")
+            r.jvmArgs = try await AuthlibInjector.jvmArgs(root: root, meta: meta)
+            return r
         case .microsoft:
             if let c = tokenCache[acc.uuid], c.expires > Date().addingTimeInterval(300) {
                 return LoginResult(name: acc.name, uuid: acc.uuid, accessToken: c.token, userType: "msa")

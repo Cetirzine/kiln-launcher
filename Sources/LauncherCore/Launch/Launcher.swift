@@ -188,7 +188,9 @@ package enum Launcher {
         // Java 24+：紧凑对象头，显著降低堆内存占用（25 起为正式功能）
         if s.compactHeaders && java.major >= 25 { args.append("-XX:+UseCompactObjectHeaders") }
         else if s.compactHeaders && java.major == 24 { args += ["-XX:+UnlockExperimentalVMOptions", "-XX:+UseCompactObjectHeaders"] }
-        if s.classDataSharing && java.hasBaseCDS {
+        // Java agent（如 authlib-injector）与动态 CDS / AOT 缓存的生成不兼容
+        let hasAgent = (existing + custom).contains { $0.hasPrefix("-javaagent:") }
+        if s.classDataSharing && java.hasBaseCDS && !hasAgent {
             let dir = instance.dir.appendingPathComponent(".kiln", isDirectory: true)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             if java.major >= 25 && !args.contains("-XX:+UseZGC") {
@@ -234,7 +236,7 @@ package enum Launcher {
         }
         let custom = split(setup.jvmArgs.flatMap { $0.isEmpty ? nil : $0 } ?? s.jvmArgs)
         let classpathKey = libs.map(\.path.path).joined(separator: ":")
-        jvm += performanceArguments(java: java, memoryMB: memoryMB(instance), instance: instance, custom: custom, classpath: classpathKey, existing: jvm)
+        jvm += performanceArguments(java: java, memoryMB: memoryMB(instance), instance: instance, custom: custom, classpath: classpathKey, existing: jvm + login.jvmArgs)
         jvm += ["-Dfml.ignoreInvalidMinecraftCertificates=true", "-Dfml.ignorePatchDiscrepancies=true",
                 "-Dlog4j2.formatMsgNoLookups=true", "-Dorg.lwjgl.librarypath=${natives_directory}"]
         if let logArg = json["logging"]["client"]["argument"].string, let id = json["logging"]["client"]["file"]["id"].string {
@@ -243,6 +245,8 @@ package enum Launcher {
                 jvm.append(logArg.replacingOccurrences(of: "${path}", with: path.path))
             }
         }
+        // 外置登录 / 离线皮肤：authlib-injector
+        jvm += login.jvmArgs
         jvm += custom
         guard let mainClass = json["mainClass"].string else {
             throw LauncherError(T("版本 JSON 中缺少 mainClass", "mainClass is missing from the version JSON"))
@@ -339,7 +343,7 @@ package enum Launcher {
     }
 
     static func redact(_ s: String, _ login: LoginResult) -> String {
-        login.userType == "msa" ? s.replacingOccurrences(of: login.accessToken, with: "********") : s
+        login.userType == "legacy" ? s : s.replacingOccurrences(of: login.accessToken, with: "********")
     }
 
     static func exportScript(java: JavaInfo, args: [String], cwd: URL, to url: URL) throws {
@@ -369,7 +373,7 @@ package enum Launcher {
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         let logHandle = try? FileHandle(forWritingTo: logURL)
         game.logFile = logURL
-        let redactToken = login.userType == "msa" ? login.accessToken : nil
+        let redactToken = login.userType == "legacy" ? nil : login.accessToken
 
         pipe.fileHandleForReading.readabilityHandler = { h in
             let data = h.availableData

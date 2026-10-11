@@ -255,6 +255,19 @@ package final class McInstance: Identifiable, Hashable {
         switch loader {
         case "Fabric": prefix = "net.fabricmc:fabric-loader:"
         case "Quilt": prefix = "org.quiltmc:quilt-loader:"
+        case "Forge", "NeoForge":
+            // 1.17+：游戏参数中带有版本号
+            let key = loader == "Forge" ? "--fml.forgeVersion" : "--fml.neoForgeVersion"
+            let args = json["arguments"]["game"].array.compactMap(\.string)
+            if let i = args.firstIndex(of: key), i + 1 < args.count { return args[i + 1] }
+            // 旧版：net.minecraftforge:forge:1.12.2-14.23.5.2864
+            let lib = loader == "Forge" ? "net.minecraftforge:forge:" : "net.neoforged:neoforge:"
+            guard let name = libraryNames.first(where: { $0.hasPrefix(lib) }) else { return nil }
+            var v = String(name.dropFirst(lib.count).split(separator: ":")[0])
+            let game = vanillaVersion
+            if v.hasPrefix(game + "-") { v = String(v.dropFirst(game.count + 1)) }
+            if v.hasSuffix("-" + game) { v = String(v.dropLast(game.count + 1)) }
+            return v
         default: return nil
         }
         return libraryNames.first { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }

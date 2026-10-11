@@ -13,6 +13,7 @@ struct DownloadPage: View {
                 SegmentBar(items: [
                     (AppState.DownloadSection.game, T("游戏", "Game"), "cube.fill"),
                     (.mod, "Mod", "puzzlepiece.extension.fill"),
+                    (.modpack, T("整合包", "Modpacks"), "shippingbox.fill"),
                     (.resourcepack, T("资源包", "Resource packs"), "photo.stack.fill"),
                     (.shader, T("光影", "Shaders"), "sun.max.fill"),
                     (.manager, T("任务", "Tasks"), "list.bullet.rectangle.fill"),
@@ -24,6 +25,7 @@ struct DownloadPage: View {
                 switch state.downloadSection {
                 case .game: DownloadGamePage()
                 case .mod: ResourceSearchPage(type: .mod).id("mod")
+                case .modpack: ResourceSearchPage(type: .modpack).id("modpack")
                 case .resourcepack: ResourceSearchPage(type: .resourcepack).id("rp")
                 case .shader: ResourceSearchPage(type: .shader).id("shader")
                 case .manager: TaskManagerPage()
@@ -397,11 +399,19 @@ struct ResourceSearchPage: View {
         VStack(spacing: 12) {
             HStack(spacing: 10) {
                 SearchField(placeholder: T("搜索\(type.title)", "Search \(type.title)"), text: $query) { runSearch() }
-                Picker(T("安装到", "Install to"), selection: $target) {
-                    Text(T("不限版本（另存为文件）", "Any version (save as file)")).tag("")
-                    ForEach(state.instances.filter { $0.category != .error }) { Text($0.name).tag($0.name) }
+                if type == .modpack {
+                    Button { ModpackActions.chooseFile() } label: {
+                        Label(T("从文件安装…", "Install from file…"), systemImage: "doc.badge.plus")
+                    }
+                    .buttonStyle(.kiln)
+                    .help(T("也可以直接把 .mrpack 或整合包 .zip 拖到窗口上", "You can also drop a .mrpack or modpack .zip onto the window"))
+                } else {
+                    Picker(T("安装到", "Install to"), selection: $target) {
+                        Text(T("不限版本（另存为文件）", "Any version (save as file)")).tag("")
+                        ForEach(state.instances.filter { $0.category != .error }) { Text($0.name).tag($0.name) }
+                    }
+                    .frame(width: 240)
                 }
-                .frame(width: 240)
             }
             // 筛选：标签一列、各段等宽，上下两行的分段对齐
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
@@ -413,7 +423,7 @@ struct ResourceSearchPage: View {
                               selection: $source, segmentWidth: Self.filterWidth)
                     Color.clear.frame(height: 1).gridCellUnsizedAxes(.vertical)
                 }
-                if type == .mod {
+                if type == .mod || type == .modpack {
                     GridRow {
                         filterLabel(T("加载器", "Loader"))
                         Segmented(items: [("", T("全部", "All"))] + ["Fabric", "Forge", "NeoForge", "Quilt"].map { ($0, $0) },
@@ -450,7 +460,7 @@ struct ResourceSearchPage: View {
         .padding(.horizontal, 24).padding(.bottom, 12)
         .onAppear {
             if let t = ResourceSearchPage.targetInstance { target = t; ResourceSearchPage.targetInstance = nil }
-            else if let s = state.selectedInstance, type != .mod || s.isModded { target = s.name }
+            else if type != .modpack, let s = state.selectedInstance, type != .mod || s.isModded { target = s.name }
             if let i = instance, let own = instanceLoader(i) { loader = own }
             runSearch()
         }
@@ -475,7 +485,7 @@ struct ResourceSearchPage: View {
     }
 
     private var loaderFilter: String? {
-        type == .mod && !loader.isEmpty ? loader : nil
+        (type == .mod || type == .modpack) && !loader.isEmpty ? loader : nil
     }
 
     private func runSearch(more: Bool = false) {
@@ -590,6 +600,10 @@ struct ProjectVersionsSheet: View {
     @PState private var versions: [Modrinth.Version] = []
     @PState private var loading = true
     @PState private var error: String?
+    /// 正在检查前置的版本
+    @PState private var checking: String?
+    /// 需要一起安装的前置
+    @PState private var pending: (version: Modrinth.Version, deps: [(project: Modrinth.Project?, version: Modrinth.Version)])?
 
     private var website: String {
         project.pageURL ?? "https://modrinth.com/\(type == .shader ? "shader" : type.rawValue)/\(project.slug)"
@@ -623,8 +637,31 @@ struct ProjectVersionsSheet: View {
                     .buttonStyle(.kiln)
                 }
             }
-            Text(instance.map { T("将安装到版本 \($0.name)", "Will be installed into \($0.name)") } ?? T("未选择版本，将另存为文件", "No instance selected; the file will be saved"))
-                .font(.system(size: 12)).foregroundStyle(Theme.text3)
+            if type == .modpack {
+                Text(T("选择一个版本，安装为新的游戏版本", "Choose a version to install as a new instance"))
+                    .font(.system(size: 12)).foregroundStyle(Theme.text3)
+            } else {
+                Text(instance.map { T("将安装到版本 \($0.name)", "Will be installed into \($0.name)") } ?? T("未选择版本，将另存为文件", "No instance selected; the file will be saved"))
+                    .font(.system(size: 12)).foregroundStyle(Theme.text3)
+            }
+            if let pending {
+                // 前置确认
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(T("\(project.title) 需要以下前置 Mod：", "\(project.title) requires these mods:"))
+                        .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.text)
+                    Text(pending.deps.map { $0.project?.title ?? $0.version.fileName }.joined(separator: "、"))
+                        .font(.system(size: 12)).foregroundStyle(Theme.text2).fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button(T("一起安装（\(pending.deps.count + 1) 个）", "Install all (\(pending.deps.count + 1))")) {
+                            download(pending.version, with: pending.deps.map(\.version))
+                        }.buttonStyle(.kilnPrimary)
+                        Button(T("只安装 \(project.title)", "Only \(project.title)")) { download(pending.version, with: []) }.buttonStyle(.kiln)
+                        Button(T("取消", "Cancel")) { self.pending = nil }.buttonStyle(.kiln)
+                    }
+                }
+                .padding(12)
+                .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 3))
+            }
             PageScroll {
                 LazyVStack(spacing: 4) {
                     if loading { ProgressView().padding(30) }
@@ -639,8 +676,10 @@ struct ProjectVersionsSheet: View {
                                 // 作者禁止第三方下载：只能到网站手动下载
                                 Button(T("到网站下载", "Download on website")) { Links.open(website) }.buttonStyle(.kiln)
                                     .help(T("作者不允许第三方启动器下载此文件", "The author doesn't allow third-party launchers to download this file"))
+                            } else if checking == v.id {
+                                ProgressView().controlSize(.small).help(T("正在检查前置", "Checking dependencies"))
                             } else {
-                                Button(T("安装", "Install")) { download(v) }.buttonStyle(.kilnPrimary)
+                                Button(T("安装", "Install")) { install(v) }.buttonStyle(.kilnPrimary).disabled(checking != nil)
                             }
                         }
                     }
@@ -652,17 +691,40 @@ struct ProjectVersionsSheet: View {
         .frame(width: 620, height: 520)
         .task {
             do {
-                let loader = type == .mod ? self.loader : nil
+                let loader = type == .mod || type == .modpack ? self.loader : nil
                 switch project.source {
-                case .modrinth: versions = try await Modrinth.versions(project.id, gameVersion: instance?.vanillaVersion, loader: loader)
-                case .curseforge: versions = try await CurseForge.files(project, gameVersion: instance?.vanillaVersion, loader: loader)
+                case .modrinth: versions = try await Modrinth.versions(project.id, gameVersion: type == .modpack ? nil : instance?.vanillaVersion, loader: loader)
+                case .curseforge: versions = try await CurseForge.files(project, gameVersion: type == .modpack ? nil : instance?.vanillaVersion, loader: loader)
                 }
             } catch { self.error = error.friendly }
             loading = false
         }
     }
 
-    private func download(_ v: Modrinth.Version) {
+    /// 点击安装：整合包打开安装窗口；Mod 先检查前置
+    private func install(_ v: Modrinth.Version) {
+        if type == .modpack {
+            AppState.shared.modpackInstall = .remote(v, project)
+            dismiss()
+            return
+        }
+        guard type == .mod, let instance, !v.dependencies.filter(\.required).isEmpty else { download(v, with: []); return }
+        checking = v.id
+        Task { @MainActor in
+            defer { checking = nil }
+            // 跳过已安装的前置：识别 mods 文件夹中的文件
+            let mods = instance.gameDir.appendingPathComponent("mods")
+            let files = ((try? FileManager.default.contentsOfDirectory(at: mods, includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.pathExtension == "jar" || $0.lastPathComponent.hasSuffix(".jar.disabled") }
+            let installed = ModIndex.installedProjects(await ModIndex.identify(files))
+            let loader = instance.loaders.first { ["Fabric", "Forge", "NeoForge", "Quilt"].contains($0) }
+            let deps = (try? await ModIndex.requiredDependencies(of: v, gameVersion: instance.vanillaVersion, loader: loader,
+                                                                  installedProjects: installed)) ?? []
+            if deps.isEmpty { download(v, with: []) } else { pending = (v, deps) }
+        }
+    }
+
+    private func download(_ v: Modrinth.Version, with deps: [Modrinth.Version]) {
         var dest: URL
         if let instance {
             dest = instance.gameDir.appendingPathComponent("\(type.folder)/\(v.fileName)")
@@ -672,11 +734,21 @@ struct ProjectVersionsSheet: View {
             guard panel.runModal() == .OK, let u = panel.url else { return }
             dest = u
         }
-        var item = DownloadItem(url: v.fileURL, destination: dest, sha1: v.sha1, size: v.size)
-        if project.source == .curseforge { item.urls = CurseForge.downloadURLs(v) }
-        JobCenter.shared.start(T("下载 \(v.fileName)", "Download \(v.fileName)")) { job in
-            job.enter(v.fileName, index: 0, of: 1)
-            try await Downloader.run([item], job: job)
+        func item(_ v: Modrinth.Version, _ dest: URL) -> DownloadItem {
+            var item = DownloadItem(url: v.fileURL, destination: dest, sha1: v.sha1, size: v.size)
+            if v.source == .curseforge { item.urls = CurseForge.downloadURLs(v) }
+            return item
+        }
+        var items = [item(v, dest)]
+        if let instance {
+            for d in deps where !d.blocked {
+                items.append(item(d, instance.gameDir.appendingPathComponent("mods/\(d.fileName)")))
+            }
+        }
+        let title = deps.isEmpty ? v.fileName : T("\(v.fileName) 及 \(deps.count) 个前置", "\(v.fileName) and \(deps.count) dependencies")
+        JobCenter.shared.start(T("下载 \(title)", "Download \(title)")) { job in
+            job.enter(title, index: 0, of: 1)
+            try await Downloader.run(items, job: job)
         }
         dismiss()
     }

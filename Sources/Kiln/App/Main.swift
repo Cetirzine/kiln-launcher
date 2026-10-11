@@ -40,6 +40,15 @@ enum Entry {
             ModSearchCheck.run()
             exit(0)
         }
+        if let i = args.firstIndex(of: "--modpack-install-test"), args.count > i + 2 {
+            exit(ModpackInstallCheck.run(source: args[i + 1], folder: URL(fileURLWithPath: args[i + 2])) ? 0 : 1)
+        }
+        if args.contains("--skin-check") {
+            exit(SkinCheck.run() ? 0 : 1)
+        }
+        if args.contains("--mod-core-check") {
+            exit(ModCoreCheck.run() ? 0 : 1)
+        }
         if args.contains("--modrinth-check") {
             ModrinthCheck.run()
             exit(0)

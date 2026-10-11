@@ -13,9 +13,9 @@ struct InstancesPage: View {
         VStack(spacing: 0) {
             PageHeader(T("版本", "Instances"), subtitle: settings.minecraftFolder) {
                 folderMenu
-                IconButton(systemImage: "folder", help: T("在访达中显示", "Show in Finder")) { NSWorkspace.shared.open(settings.minecraftURL) }
                 Button(T("安装新版本", "Install a version")) { state.page = .download; state.downloadSection = .game }
                     .buttonStyle(.kiln)
+                IconButton(systemImage: "folder", help: T("在访达中显示", "Show in Finder")) { NSWorkspace.shared.open(settings.minecraftURL) }
             }
             SearchField(placeholder: T("按名称筛选", "Filter by name"), text: $search)
             .padding(.horizontal, 28).padding(.bottom, 14)
@@ -124,6 +124,8 @@ struct InstanceRow: View {
     let instance: McInstance
     @PState private var hover = false
     @PState private var iconPicker = false
+    @PState private var nameSheet: InstanceNameSheet.Mode?
+    @PState private var exporting = false
 
     var body: some View {
         let selected = state.selectedInstance == instance
@@ -171,10 +173,18 @@ struct InstanceRow: View {
             Button(T("开始游戏", "Play")) { state.select(instance); state.launchSelected() }
             Button(T("版本设置", "Instance settings")) { state.subPage = .instanceSetup(instance) }
             Button(T("更换图标…", "Change icon…")) { iconPicker = true }
+            Divider()
+            Button(T("重命名…", "Rename…")) { nameSheet = .rename }
+            Button(T("复制…", "Duplicate…")) { nameSheet = .duplicate }
+            Button(T("导出整合包…", "Export modpack…")) { exporting = true }
             Button(T("在访达中显示", "Show in Finder")) { NSWorkspace.shared.open(instance.dir) }
             Divider()
             Button(T("删除…", "Delete…"), role: .destructive) { InstanceActions.delete(instance) }
         }
+        .sheet(item: Binding(get: { nameSheet.map { NameSheetItem(mode: $0) } }, set: { nameSheet = $0?.mode })) { item in
+            InstanceNameSheet(instance: instance, mode: item.mode)
+        }
+        .sheet(isPresented: $exporting) { ModpackExportSheet(instance: instance) }
     }
 
     private var detail: String {
@@ -240,8 +250,13 @@ enum InstanceActions {
 struct InstanceSetupPage: View {
     @Environment(AppState.self) private var state
     let instance: McInstance
-    enum Tab: Hashable { case overview, mods, settings }
-    @PState private var tab: Tab = .overview
+    enum Tab: Hashable { case overview, mods, worlds, resourcepacks, shaders, screenshots, settings }
+    @PState private var tab: Tab
+
+    init(instance: McInstance, tab: Tab = .overview) {
+        self.instance = instance
+        _tab = PState(initialValue: tab)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -249,6 +264,10 @@ struct InstanceSetupPage: View {
             HStack {
                 SegmentBar(items: [(Tab.overview, T("概览", "Overview"), "square.grid.2x2"),
                                    (Tab.mods, "Mod", "puzzlepiece.extension"),
+                                   (Tab.worlds, T("存档", "Worlds"), "globe"),
+                                   (Tab.resourcepacks, T("资源包", "Resource packs"), "photo.stack"),
+                                   (Tab.shaders, T("光影", "Shaders"), "sun.max"),
+                                   (Tab.screenshots, T("截图", "Screenshots"), "camera"),
                                    (Tab.settings, T("设置", "Settings"), "slider.horizontal.3")], selection: $tab)
                 Spacer()
             }
@@ -258,6 +277,10 @@ struct InstanceSetupPage: View {
                     switch tab {
                     case .overview: InstanceOverview(instance: instance)
                     case .mods: ModManager(instance: instance)
+                    case .worlds: WorldsView(instance: instance)
+                    case .resourcepacks: PacksView(instance: instance, type: .resourcepack)
+                    case .shaders: PacksView(instance: instance, type: .shader)
+                    case .screenshots: ScreenshotsView(instance: instance)
                     case .settings: InstanceSettingsForm(instance: instance)
                     }
                 }
@@ -270,6 +293,8 @@ struct InstanceSetupPage: View {
 struct InstanceOverview: View {
     @Environment(AppState.self) private var state
     let instance: McInstance
+    @PState private var nameSheet: InstanceNameSheet.Mode?
+    @PState private var exporting = false
 
     var body: some View {
         VStack(spacing: 14) {
@@ -312,6 +337,9 @@ struct InstanceOverview: View {
             }
             Card(T("管理", "Manage")) {
                 HStack(spacing: 8) {
+                    Button(T("重命名…", "Rename…")) { nameSheet = .rename }.buttonStyle(.kiln)
+                    Button(T("复制…", "Duplicate…")) { nameSheet = .duplicate }.buttonStyle(.kiln)
+                    Button(T("导出整合包…", "Export modpack…")) { exporting = true }.buttonStyle(.kiln)
                     Button(T("补全文件", "Repair files")) { InstanceActions.completeFiles(instance) }.buttonStyle(.kiln)
                     Button(T("导出启动脚本…", "Export launch script…")) {
                         let panel = NSSavePanel()
@@ -326,6 +354,10 @@ struct InstanceOverview: View {
                 }
             }
         }
+        .sheet(item: Binding(get: { nameSheet.map { NameSheetItem(mode: $0) } }, set: { nameSheet = $0?.mode })) { item in
+            InstanceNameSheet(instance: instance, mode: item.mode)
+        }
+        .sheet(isPresented: $exporting) { ModpackExportSheet(instance: instance) }
     }
 
     private func folder(_ title: String, _ url: URL) -> some View {
@@ -343,7 +375,7 @@ struct InstanceOverview: View {
     }
 }
 
-/// 本地 Mod 管理
+/// 本地 Mod 管理：识别每个文件对应的 Mod（Modrinth / CurseForge），检查并安装更新
 struct ModManager: View {
     @Environment(AppState.self) private var state
     let instance: McInstance
@@ -353,22 +385,41 @@ struct ModManager: View {
     }
     @PState private var files: [ModFile] = []
     @PState private var search = ""
+    /// 识别结果，按文件名（不含 .disabled）索引，启用 / 禁用后仍然有效
+    @PState private var entries: [String: ModIndex.Entry] = [:]
+    @PState private var updates: [String: ModIndex.Update] = [:]
+    @PState private var identifying = false
+    @PState private var checking = false
+    @PState private var updating: Set<String> = []
+    @PState private var checkedAt: Date?
 
     private var modsDir: URL { instance.gameDir.appendingPathComponent("mods") }
+    private var loader: String? { instance.loaders.first { ["Fabric", "Forge", "NeoForge", "Quilt"].contains($0) } }
 
     var body: some View {
         Card(T("已安装的 Mod", "Installed mods") + " · \(files.count)",
-             trailing: AnyView(HStack(spacing: 4) {
-                 IconButton(systemImage: "folder", help: T("打开文件夹", "Open folder")) {
-                     try? FileManager.default.createDirectory(at: modsDir, withIntermediateDirectories: true)
-                     NSWorkspace.shared.open(modsDir)
+             trailing: AnyView(HStack(spacing: 6) {
+                 if checking || identifying {
+                     ProgressView().controlSize(.small)
+                     Text(identifying ? T("正在识别…", "Identifying…") : T("正在检查更新…", "Checking for updates…"))
+                         .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
+                 } else {
+                     Button(T("检查更新", "Check for updates")) { Task { await refresh(force: true) } }.buttonStyle(.kiln)
+                 }
+                 if !updates.isEmpty {
+                     Button(T("全部更新（\(updates.count)）", "Update all (\(updates.count))")) { updateAll() }
+                         .buttonStyle(.kilnPrimary).disabled(!updating.isEmpty)
                  }
                  Button(T("下载 Mod", "Download mods")) {
                      state.subPage = nil
                      state.page = .download
                      state.downloadSection = .mod
                      ResourceSearchPage.targetInstance = instance.name
-                 }.buttonStyle(.kilnPrimary)
+                 }.buttonStyle(.kiln)
+                 IconButton(systemImage: "folder", help: T("打开文件夹", "Open folder")) {
+                     try? FileManager.default.createDirectory(at: modsDir, withIntermediateDirectories: true)
+                     NSWorkspace.shared.open(modsDir)
+                 }
              })) {
             if !instance.isModded {
                 Text(T("该版本没有安装 Mod 加载器，Mod 不会生效。", "This instance has no mod loader, so mods won't load.")).font(.system(size: 12)).foregroundStyle(Theme.yellow)
@@ -376,24 +427,93 @@ struct ModManager: View {
             SearchField(placeholder: T("搜索", "Search"), text: $search)
             if files.isEmpty {
                 Text(T("还没有安装 Mod", "No mods installed")).font(.system(size: 12)).foregroundStyle(Theme.text3).padding(.vertical, 8)
+            } else if let checkedAt, !checking {
+                Text(updates.isEmpty
+                     ? T("所有能识别的 Mod 都是最新版本（\(checkedAt.formatted(date: .omitted, time: .shortened)) 检查）", "All identified mods are up to date (checked \(checkedAt.formatted(date: .omitted, time: .shortened)))")
+                     : T("\(updates.count) 个 Mod 可以更新", "\(updates.count) mods can be updated"))
+                    .font(.system(size: 11.5)).foregroundStyle(updates.isEmpty ? Theme.text3 : Theme.green)
             }
-            ForEach(files.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }) { f in
-                ListItem(systemIcon: f.enabled ? "puzzlepiece.extension.fill" : "puzzlepiece.extension",
-                         title: f.name, info: f.enabled ? nil : T("已禁用", "Disabled")) {
-                    HStack(spacing: 4) {
-                        Toggle("", isOn: Binding(get: { f.enabled }, set: { toggle(f, $0) }))
-                            .toggleStyle(.switch).controlSize(.mini).labelsHidden()
-                        IconButton(systemImage: "trash", help: T("删除", "Delete")) {
-                            NSWorkspace.shared.recycle([f.url]) { _, _ in Task { @MainActor in reload() } }
-                        }
-                    }
-                }
-                .opacity(f.enabled ? 1 : 0.6)
+            VStack(spacing: 0) {
+                ForEach(visible) { f in row(f) }
             }
         }
-        .onAppear(perform: reload)
+        .task { reload(); await refresh(force: false) }
         // 游戏目录中的 Mod 变化后自动刷新
-        .onChange(of: state.fileRevision) { _, _ in reload() }
+        .onChange(of: state.fileRevision) { _, _ in reload(); Task { await refresh(force: false) } }
+    }
+
+    private var visible: [ModFile] {
+        files.filter { f in
+            guard !search.isEmpty else { return true }
+            let e = entries[f.name]
+            return f.name.localizedCaseInsensitiveContains(search)
+                || (e?.project?.title.localizedCaseInsensitiveContains(search) ?? false)
+                || (e?.project.flatMap { ModNames.shared.chinese($0.slug) }?.contains(search) ?? false)
+        }
+        // 可更新的排在前面
+        .sorted { (updates[$0.name] != nil ? 0 : 1, title($0).lowercased()) < (updates[$1.name] != nil ? 0 : 1, title($1).lowercased()) }
+    }
+
+    private func title(_ f: ModFile) -> String { entries[f.name]?.project?.title ?? f.name }
+
+    private func row(_ f: ModFile) -> some View {
+        let e = entries[f.name]
+        let u = updates[f.name]
+        return HStack(spacing: 12) {
+            Group {
+                if let icon = e?.project?.iconURL {
+                    AsyncImage(url: icon) { $0.resizable().interpolation(.medium) } placeholder: { Theme.panel2 }
+                } else {
+                    Image(systemName: f.enabled ? "puzzlepiece.extension.fill" : "puzzlepiece.extension")
+                        .font(.system(size: 14)).foregroundStyle(Theme.text2)
+                }
+            }
+            .frame(width: 28, height: 28).clipShape(RoundedRectangle(cornerRadius: 3))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(title(f)).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
+                    if Localizer.shared.language != .en, let slug = e?.project?.slug, let zh = ModNames.shared.chinese(slug), zh != e?.project?.title {
+                        Text(zh).font(.system(size: 11.5)).foregroundStyle(Theme.text3).lineLimit(1)
+                    }
+                    if !f.enabled { Text(T("已禁用", "Disabled")).font(.system(size: 11)).foregroundStyle(Theme.text3) }
+                }
+                Text(detail(f, e)).font(.system(size: 11.5)).foregroundStyle(Theme.text2).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: 6)
+            if let u {
+                if updating.contains(f.name) {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button(T("更新到 \(shortVersion(u.latest))", "Update to \(shortVersion(u.latest))")) { update([u]) }
+                        .buttonStyle(.kiln).help(u.latest.fileName)
+                }
+            }
+            Toggle("", isOn: Binding(get: { f.enabled }, set: { toggle(f, $0) }))
+                .toggleStyle(.switch).controlSize(.mini).labelsHidden()
+            IconButton(systemImage: "trash", help: T("删除", "Delete")) {
+                NSWorkspace.shared.recycle([f.url]) { _, _ in Task { @MainActor in reload() } }
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .opacity(f.enabled ? 1 : 0.6)
+        .contextMenu {
+            if let p = e?.project {
+                Button(T("在 \(e?.source?.rawValue ?? "") 查看", "View on \(e?.source?.rawValue ?? "")")) {
+                    Links.open(p.pageURL ?? "https://modrinth.com/mod/\(p.slug)")
+                }
+            }
+            Button(T("在访达中显示", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([f.url]) }
+        }
+    }
+
+    private func detail(_ f: ModFile, _ e: ModIndex.Entry?) -> String {
+        guard let e, let v = e.version else { return f.name + (identifying ? "" : T("　·　未识别", " · not identified")) }
+        return "\(shortVersion(v))　·　\(e.source?.rawValue ?? "")　·　\(f.name)"
+    }
+
+    private func shortVersion(_ v: Modrinth.Version) -> String {
+        let n = v.number.isEmpty ? v.name : v.number
+        return n.count > 24 ? String(n.prefix(24)) + "…" : n
     }
 
     private func reload() {
@@ -401,6 +521,46 @@ struct ModManager: View {
         files = urls.filter { $0.pathExtension == "jar" || $0.lastPathComponent.hasSuffix(".jar.disabled") }
             .map(ModFile.init).sorted { $0.name.lowercased() < $1.name.lowercased() }
     }
+
+    /// 识别新文件，并检查更新
+    private func refresh(force: Bool) async {
+        guard !identifying && !checking, !files.isEmpty else { return }
+        let names = Set(files.map(\.name))
+        entries = entries.filter { names.contains($0.key) }
+        updates = updates.filter { names.contains($0.key) }
+        let unknown = files.filter { entries[$0.name] == nil }
+        if !unknown.isEmpty {
+            identifying = true
+            let found = await ModIndex.identify(unknown.map(\.url))
+            for (url, e) in found { entries[url.lastPathComponent.replacingOccurrences(of: ".disabled", with: "")] = e }
+            identifying = false
+        }
+        guard force || checkedAt == nil || !unknown.isEmpty else { return }
+        checking = true
+        let list = files.compactMap { f in entries[f.name].map { ModIndex.Entry(file: f.url, sha1: $0.sha1, project: $0.project, version: $0.version) } }
+        let found = await ModIndex.updates(list, gameVersion: instance.vanillaVersion, loader: loader)
+        updates = Dictionary(found.map { ($0.file.lastPathComponent.replacingOccurrences(of: ".disabled", with: ""), $0) }, uniquingKeysWith: { a, _ in a })
+        checking = false
+        checkedAt = Date()
+    }
+
+    private func update(_ list: [ModIndex.Update]) {
+        let keys = list.map { $0.file.lastPathComponent.replacingOccurrences(of: ".disabled", with: "") }
+        updating.formUnion(keys)
+        let title = list.count == 1 ? (list[0].project?.title ?? list[0].latest.fileName) : T("\(list.count) 个 Mod", "\(list.count) mods")
+        JobCenter.shared.start(T("更新 \(title)", "Update \(title)")) { job in
+            defer {
+                updating.subtract(keys)
+                for k in keys { updates[k] = nil; entries[k] = nil }
+                reload()
+                Task { await refresh(force: false) }
+            }
+            job.enter(title, index: 0, of: 1)
+            for u in list { try await ModIndex.apply(u, job: job) }
+        }
+    }
+
+    private func updateAll() { update(Array(updates.values)) }
 
     private func toggle(_ f: ModFile, _ on: Bool) {
         let target = on ? f.url.deletingPathExtension() : f.url.appendingPathExtension("disabled")

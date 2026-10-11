@@ -12,6 +12,7 @@ package enum CurseForge {
         case .mod: return 6
         case .resourcepack: return 12
         case .shader: return 6552
+        case .modpack: return 4471
         }
     }
 
@@ -34,6 +35,15 @@ package enum CurseForge {
         return try JSON(data: try await Net.data([mirror + path]))
     }
 
+    private static func post(_ path: String, _ body: JSON) async throws -> JSON {
+        let key = LauncherSettings.shared.curseforgeKey.trimmingCharacters(in: .whitespaces)
+        let base = key.isEmpty ? mirror : official
+        let (code, j) = try await Net.request(base + path, body: body.data(pretty: false), contentType: "application/json",
+                                              headers: key.isEmpty ? [:] : ["x-api-key": key])
+        guard code == 200 else { throw LauncherError("CurseForge HTTP \(code)") }
+        return j
+    }
+
     private static func query(_ items: [(String, String)]) -> String {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._~")
@@ -44,7 +54,7 @@ package enum CurseForge {
         var q: [(String, String)] = [("gameId", "432"), ("classId", "\(classId(type))"), ("searchFilter", text),
                                      ("sortField", "2"), ("sortOrder", "desc"), ("index", "\(offset)"), ("pageSize", "30")]
         if let gameVersion, !gameVersion.isEmpty { q.append(("gameVersion", gameVersion)) }
-        if type == .mod, let loader, let t = loaderType(loader) { q.append(("modLoaderType", "\(t)")) }
+        if type == .mod || type == .modpack, let loader, let t = loaderType(loader) { q.append(("modLoaderType", "\(t)")) }
         let j = try await get("/v1/mods/search?" + query(q))
         let list = j["data"].array.compactMap(project)
         // CurseForge 的模糊匹配较宽：在热度顺序基础上，把名称更匹配的排到前面
@@ -80,24 +90,110 @@ package enum CurseForge {
         if let gameVersion, !gameVersion.isEmpty { q.append(("gameVersion", gameVersion)) }
         if let loader, let t = loaderType(loader) { q.append(("modLoaderType", "\(t)")) }
         let j = try await get("/v1/mods/\(modId)/files?" + query(q))
+        return j["data"].array.compactMap(file).sorted { $0.published > $1.published }
+    }
+
+    /// 解析 CurseForge 的文件对象
+    static func file(_ f: JSON) -> Modrinth.Version? {
+        guard let id = f["id"].int, let name = f["fileName"].string else { return nil }
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let iso2 = ISO8601DateFormatter()
         let loaderNames: Set<String> = ["forge", "neoforge", "fabric", "quilt"]
-        let versions: [Modrinth.Version] = j["data"].array.compactMap { f in
-            guard let id = f["id"].int, let name = f["fileName"].string else { return nil }
-            let tags = f["gameVersions"].array.compactMap(\.string)
-            let url = f["downloadUrl"].string ?? ""
-            var v = Modrinth.Version(id: "\(id)", name: f["displayName"].string ?? name, number: name,
-                                     gameVersions: tags.filter { $0.first?.isNumber == true },
-                                     loaders: tags.map { $0.lowercased() }.filter { loaderNames.contains($0) },
-                                     fileURL: url, fileName: name,
-                                     sha1: f["hashes"].array.first { $0["algo"].int == 1 }?["value"].string,
-                                     size: f["fileLength"].double.map { Int64($0) },
-                                     published: iso.date(from: f["fileDate"].string ?? "") ?? Date(timeIntervalSince1970: 0))
-            v.blocked = url.isEmpty
-            return v
+        let tags = f["gameVersions"].array.compactMap(\.string)
+        let url = f["downloadUrl"].string ?? ""
+        let date = f["fileDate"].string ?? ""
+        var v = Modrinth.Version(id: "\(id)", name: f["displayName"].string ?? name, number: name,
+                                 gameVersions: tags.filter { $0.first?.isNumber == true },
+                                 loaders: tags.map { $0.lowercased() }.filter { loaderNames.contains($0) },
+                                 fileURL: url, fileName: name,
+                                 sha1: f["hashes"].array.first { $0["algo"].int == 1 }?["value"].string,
+                                 size: f["fileLength"].double.map { Int64($0) },
+                                 published: iso.date(from: date) ?? iso2.date(from: date) ?? Date(timeIntervalSince1970: 0))
+        v.blocked = url.isEmpty
+        v.source = .curseforge
+        v.projectId = f["modId"].int.map { "cf-\($0)" } ?? ""
+        // relationType：3 必需，2 可选
+        v.dependencies = f["dependencies"].array.compactMap { d in
+            guard let mod = d["modId"].int, let type = d["relationType"].int, type == 3 || type == 2 else { return nil }
+            return Modrinth.Dependency(projectId: "cf-\(mod)", versionId: nil, required: type == 3)
         }
-        return versions.sorted { $0.published > $1.published }
+        return v
+    }
+
+    /// 按文件 ID 批量查询（一次请求）
+    package static func files(ids: [Int]) async throws -> [Int: Modrinth.Version] {
+        guard !ids.isEmpty else { return [:] }
+        var result: [Int: Modrinth.Version] = [:]
+        for chunk in stride(from: 0, to: ids.count, by: 500).map({ Array(ids[$0..<min($0 + 500, ids.count)]) }) {
+            let j = try await post("/v1/mods/files", .object(["fileIds": .array(chunk.map { .number(Double($0)) })]))
+            for f in j["data"].array { if let id = f["id"].int, let v = file(f) { result[id] = v } }
+        }
+        return result
+    }
+
+    /// 按项目 ID 批量查询（一次请求）
+    package static func projects(ids: [Int]) async throws -> [Int: (project: Modrinth.Project, classId: Int)] {
+        guard !ids.isEmpty else { return [:] }
+        let j = try await post("/v1/mods", .object(["modIds": .array(ids.map { .number(Double($0)) })]))
+        var result: [Int: (Modrinth.Project, Int)] = [:]
+        for m in j["data"].array {
+            if let id = m["id"].int, let p = project(m) { result[id] = (p, m["classId"].int ?? 6) }
+        }
+        return result
+    }
+
+    /// 按指纹查找文件（用于识别本地 Mod）：返回 指纹 → 文件
+    package static func match(fingerprints: [UInt32]) async throws -> [UInt32: Modrinth.Version] {
+        guard !fingerprints.isEmpty else { return [:] }
+        let j = try await post("/v1/fingerprints/432", .object(["fingerprints": .array(fingerprints.map { .number(Double($0)) })]))
+        var result: [UInt32: Modrinth.Version] = [:]
+        for m in j["data"]["exactMatches"].array {
+            let f = m["file"]
+            if let fp = f["fileFingerprint"].double, let v = file(f) { result[UInt32(fp)] = v }
+        }
+        return result
+    }
+
+    /// CurseForge 的文件指纹：去掉空白字节后的 MurmurHash2（种子 1）
+    package static func fingerprint(_ data: Data) -> UInt32 {
+        let bytes = [UInt8](data.lazy.filter { $0 != 9 && $0 != 10 && $0 != 13 && $0 != 32 })
+        let m: UInt32 = 0x5bd1_e995
+        let len = bytes.count
+        var h: UInt32 = 1 ^ UInt32(truncatingIfNeeded: len)
+        var i = 0
+        while i + 4 <= len {
+            var k = UInt32(bytes[i]) | UInt32(bytes[i + 1]) << 8 | UInt32(bytes[i + 2]) << 16 | UInt32(bytes[i + 3]) << 24
+            k = k &* m
+            k ^= k >> 24
+            k = k &* m
+            h = h &* m
+            h ^= k
+            i += 4
+        }
+        let rest = len - i
+        if rest >= 3 { h ^= UInt32(bytes[i + 2]) << 16 }
+        if rest >= 2 { h ^= UInt32(bytes[i + 1]) << 8 }
+        if rest >= 1 {
+            h ^= UInt32(bytes[i])
+            h = h &* m
+        }
+        h ^= h >> 13
+        h = h &* m
+        h ^= h >> 15
+        return h
+    }
+
+    /// 项目网页
+    package static func pageURL(classId: Int, slug: String) -> String {
+        let path: String
+        switch classId {
+        case 12: path = "texture-packs"
+        case 6552: path = "shaders"
+        case 4471: path = "modpacks"
+        default: path = "mc-mods"
+        }
+        return "https://www.curseforge.com/minecraft/\(path)/\(slug)"
     }
 
     /// 下载地址候选：官方 CDN，以及 MCIM 的文件镜像

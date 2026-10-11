@@ -55,6 +55,33 @@ enum SelfTest {
         expect(FolderWatcher.isRelevant("/mc/versions/1.21/1.21.json") && FolderWatcher.isRelevant("/mc/versions/1.21/mods/a.jar")
                && !FolderWatcher.isRelevant("/mc/assets/objects/ab/abcd") && !FolderWatcher.isRelevant("/mc/versions/1.21/1.21-natives/x.dylib"),
                "文件监视的路径过滤")
+        // 版本管理：重命名与复制
+        do {
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("kiln-im-\(UUID().uuidString)")
+            let dirA = root.appendingPathComponent("versions/A")
+            try fm.createDirectory(at: dirA.appendingPathComponent("A-natives"), withIntermediateDirectories: true)
+            try Data(#"{"id":"A","inheritsFrom":"1.21.1","mainClass":"x"}"#.utf8).write(to: dirA.appendingPathComponent("A.json"))
+            try Data("jar".utf8).write(to: dirA.appendingPathComponent("A.jar"))
+            let child = root.appendingPathComponent("versions/Child")
+            try fm.createDirectory(at: child, withIntermediateDirectories: true)
+            try Data(#"{"id":"Child","inheritsFrom":"A"}"#.utf8).write(to: child.appendingPathComponent("Child.json"))
+            let a = McInstance(folder: root, name: "A")
+            expect((try? InstanceManager.rename(a, to: "B")) == nil, "被其他版本依赖时拒绝重命名")
+            try fm.removeItem(at: root.appendingPathComponent("versions/Child"))
+            try InstanceManager.duplicate(a, as: "A2")
+            let dup = try JSON(data: Data(contentsOf: root.appendingPathComponent("versions/A2/A2.json")))
+            expect(dup["id"].string == "A2" && fm.fileExists(atPath: root.appendingPathComponent("versions/A2/A2.jar").path)
+                   && !fm.fileExists(atPath: root.appendingPathComponent("versions/A2/A-natives").path), "复制版本：JSON id、jar 改名，natives 清除")
+            try InstanceManager.rename(a, to: "B")
+            let renamed = try JSON(data: Data(contentsOf: root.appendingPathComponent("versions/B/B.json")))
+            expect(renamed["id"].string == "B" && !fm.fileExists(atPath: dirA.path), "重命名版本")
+            expect(InstanceManager.validateName("B", folder: root) != nil && InstanceManager.validateName("a/b", folder: root) != nil
+                   && InstanceManager.validateName("C", folder: root) == nil, "版本名称校验")
+            expect(Modpack.safePath("../x", in: root) == nil && Modpack.safePath("/etc/x", in: root) == nil
+                   && Modpack.safePath("mods/a.jar", in: root)?.path == root.appendingPathComponent("mods/a.jar").path, "整合包路径安全检查")
+            try? fm.removeItem(at: root)
+        } catch { expect(false, "版本管理：\(error.friendly)") }
         // 账号：旧版本保存的数据（没有 needsLogin / account 字段）仍能读取
         let oldAccount = try? JSONDecoder().decode(Account.self, from: Data(#"{"kind":"offline","name":"Steve","uuid":"abc"}"#.utf8))
         expect(oldAccount?.name == "Steve" && oldAccount?.needsLogin == nil, "旧账号数据兼容")
@@ -92,13 +119,29 @@ enum SelfTest {
                     LauncherSettings.shared.selectedInstance = previousSelection
                 }
                 LauncherSettings.shared.minecraftFolder = folder.path
-                let name = "\(version)-\(loader?.lowercased() ?? "vanilla")-test"
+                let isPack = loader?.hasPrefix("pack=") == true
+                let name = isPack ? "\(version)-modpack-test" : "\(version)-\(loader?.lowercased() ?? "vanilla")-test"
                 let instanceDir = folder.appendingPathComponent("versions/\(name)")
                 if !FileManager.default.fileExists(atPath: instanceDir.appendingPathComponent("\(name).json").path) {
                     try? FileManager.default.removeItem(at: instanceDir)
                     print("安装 \(version) \(loader ?? "")…")
                     let remote = try await VersionManifest.find(version)
                     let job = Job(title: "install")
+                    if isPack {
+                        // 整合包：本地文件或下载地址
+                        let src = String(loader!.dropFirst(5))
+                        var file = URL(fileURLWithPath: src)
+                        if src.hasPrefix("http") {
+                            file = Paths.cache.appendingPathComponent(URL(string: src)!.lastPathComponent)
+                            try await Downloader.fetch(DownloadItem(url: src, destination: file))
+                        }
+                        let info = try Modpack.inspect(file)
+                        print("整合包：\(info.name) \(info.version)（\(info.format.rawValue)），MC \(info.gameVersion)，\(info.loader.map { "\($0.kind) \($0.version)" } ?? "原版")，\(info.fileCount) 个文件")
+                        let t0 = Date()
+                        let manual = try await Modpack.install(file, name: name, folder: folder, job: job)
+                        print(String(format: "整合包安装完成，用时 %.1f 秒；需手动下载 %d 个文件", Date().timeIntervalSince(t0), manual.count))
+                        for m in manual { print("  手动下载：\(m.title) \(m.fileName) \(m.pageURL)") }
+                    } else {
                     switch loader {
                     case "Forge", "NeoForge", "ForgePlus":
                         let kind = ForgeKind(rawValue: loader == "ForgePlus" ? "Forge" : loader!)!
@@ -113,6 +156,7 @@ enum SelfTest {
                         try await Installer.install(version: remote, name: name, loader: (kind, lv.version), folder: folder, job: job)
                     default:
                         try await Installer.install(version: remote, name: name, loader: nil, folder: folder, job: job)
+                    }
                     }
                 }
                 let instance = McInstance(folder: folder, name: name)
@@ -142,7 +186,15 @@ enum SelfTest {
                 let ctx = RuleContext(arch: java.arch)
                 let libs = instance.libraries(ctx)
                 try Launcher.extractNatives(instance, libs: libs, arch: java.arch)
-                let login = LoginResult(name: account.name, uuid: account.uuid, accessToken: account.uuid, userType: "legacy")
+                var login = LoginResult(name: account.name, uuid: account.uuid, accessToken: account.uuid, userType: "legacy")
+                // KILN_TEST_SKIN=<正版玩家名>：测试离线皮肤（本地皮肤服务 + authlib-injector）
+                let skinTest = ProcessInfo.processInfo.environment["KILN_TEST_SKIN"]
+                if let premium = skinTest {
+                    var acc = account
+                    acc.skin = Account.OfflineSkin(premium: premium)
+                    login = try await AccountStore.shared.login(acc)
+                    print("离线皮肤：\(login.jvmArgs.first ?? "未启用")")
+                }
                 let args = try Launcher.buildArguments(instance, java: java, login: login, libs: libs, ctx: ctx, options: LaunchOptions())
                 print("JVM 性能参数：\(args.filter { $0.hasPrefix("-XX:") || $0.hasPrefix("-Xm") || $0.hasPrefix("--sun") }.joined(separator: " "))")
                 let p = Process()
@@ -167,6 +219,8 @@ enum SelfTest {
                     let joined = output.suffix(80).joined(separator: "\n")
                     if joined.contains("Sound engine started") || joined.contains("OpenAL initialized") || joined.contains("Initializing LWJGL OpenAL") || joined.contains("Created: ") {
                         ok = true
+                        // 皮肤测试：多等几秒，让游戏查询档案与材质
+                        if skinTest != nil { try await Task.sleep(nanoseconds: 6_000_000_000) }
                         break
                     }
                 }
@@ -299,5 +353,192 @@ enum ModSearchCheck {
         }
         while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
         print(ok ? "✔ 全部通过" : "✘ 有检查未通过")
+    }
+}
+
+/// `--mod-core-check`：CurseForge 指纹、本地 Mod 识别、更新与前置解析（使用真实数据）
+enum ModCoreCheck {
+    nonisolated static func run() -> Bool {
+        let sem = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var ok = true
+        Task {
+            defer { sem.signal() }
+            func expect(_ c: Bool, _ name: String) { print("  \(c ? "✔" : "✘") \(name)"); if !c { ok = false } }
+            do {
+                let dir = Paths.cache.appendingPathComponent("modcore-\(UUID().uuidString)/mods", isDirectory: true)
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+
+                // CurseForge：Create 0.5.1.f（1.20.1 Forge）
+                let cf = try await CurseForge.files(ids: [4835191])
+                guard let create = cf[4835191] else { expect(false, "CurseForge 批量查询文件"); return }
+                expect(create.fileName.hasPrefix("create-1.20.1") && create.projectId == "cf-328085", "CurseForge 批量查询文件")
+                let createURL = dir.appendingPathComponent(create.fileName)
+                var item = DownloadItem(url: create.fileURL, destination: createURL, sha1: create.sha1, size: create.size)
+                item.urls = CurseForge.downloadURLs(create)
+                try await Downloader.run([item], job: nil)
+                let fp = CurseForge.fingerprint(try Data(contentsOf: createURL))
+                let matched = try await CurseForge.match(fingerprints: [fp])
+                expect(matched[fp]?.id == "4835191", "CurseForge 指纹（MurmurHash2）与官方一致：\(fp)")
+
+                // Modrinth：Sodium 的一个旧版本（1.20.1 Fabric）
+                let sodiumVersions = try await Modrinth.versions("AANobbMI", gameVersion: "1.20.1", loader: "fabric")
+                guard let old = sodiumVersions.last else { expect(false, "Modrinth 版本列表"); return }
+                try await Downloader.fetch(DownloadItem(url: old.fileURL, destination: dir.appendingPathComponent(old.fileName), sha1: old.sha1, size: old.size))
+                // 一个识别不了的文件
+                try Data("not a mod".utf8).write(to: dir.appendingPathComponent("unknown.jar"))
+
+                let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+                let t0 = Date()
+                let entries = await ModIndex.identify(files)
+                print(String(format: "  识别 %d 个文件用时 %.1f 秒", files.count, Date().timeIntervalSince(t0)))
+                let byName = Dictionary(entries.values.map { ($0.file.lastPathComponent, $0) }, uniquingKeysWith: { a, _ in a })
+                expect(byName[old.fileName]?.project?.title == "Sodium" && byName[old.fileName]?.source == .modrinth, "识别 Modrinth Mod：\(byName[old.fileName]?.project?.title ?? "无")")
+                // 同一个文件也在 Modrinth 上发布时优先使用 Modrinth
+                expect(byName[create.fileName]?.project?.title.contains("Create") == true, "识别 Create（\(byName[create.fileName]?.source?.rawValue ?? "无")）：\(byName[create.fileName]?.project?.title ?? "无")")
+                expect(byName["unknown.jar"]?.project == nil, "无法识别的文件保持未知")
+
+                // 更新
+                let sodiumEntry = entries.values.filter { $0.source == .modrinth }
+                let up = await ModIndex.updates(sodiumEntry, gameVersion: "1.20.1", loader: "Fabric")
+                expect(up.first?.latest.id == sodiumVersions.first?.id, "Modrinth 更新：\(old.number) → \(up.first?.latest.number ?? "无")")
+                // CurseForge 更新：直接以 CurseForge 来源检查
+                let cfProject = try await CurseForge.projects(ids: [328085])[328085]?.project
+                let cfEntry = ModIndex.Entry(file: createURL, sha1: "", project: cfProject, version: create)
+                let cfUp = await ModIndex.updates([cfEntry], gameVersion: "1.20.1", loader: "Forge")
+                expect(cfUp.first.map { $0.latest.published > create.published } == true, "CurseForge 更新：\(create.fileName) → \(cfUp.first?.latest.fileName ?? "无")")
+                if let u = up.first {
+                    try await ModIndex.apply(u, job: nil)
+                    let after = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+                    expect(after.contains(u.latest.fileName) && !after.contains(old.fileName), "应用更新：替换为 \(u.latest.fileName)")
+                }
+
+                // 前置：Sodium Extra 需要 Sodium
+                let extra = try await Modrinth.versions("PtjYWJkn", gameVersion: "1.20.1", loader: "fabric")
+                if let e = extra.first {
+                    let deps = try await ModIndex.requiredDependencies(of: e, gameVersion: "1.20.1", loader: "fabric", installedProjects: [])
+                    expect(deps.contains { $0.version.projectId == "AANobbMI" }, "前置解析：Sodium Extra → \(deps.map { $0.project?.title ?? $0.version.projectId }.joined(separator: ", "))")
+                    let none = try await ModIndex.requiredDependencies(of: e, gameVersion: "1.20.1", loader: "fabric", installedProjects: ["AANobbMI"])
+                    expect(!none.contains { $0.version.projectId == "AANobbMI" }, "已安装的前置会跳过")
+                }
+            } catch {
+                print("  ✘ \(error.friendly)")
+                ok = false
+            }
+        }
+        while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        print(ok ? "全部通过" : "存在失败项")
+        return ok
+    }
+}
+
+/// `--modpack-install-test <文件或地址> <目录>`：只安装整合包并检查结果，不启动游戏
+enum ModpackInstallCheck {
+    nonisolated static func run(source: String, folder: URL) -> Bool {
+        let sem = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var ok = false
+        Task { @MainActor in
+            defer { sem.signal() }
+            do {
+                var file = URL(fileURLWithPath: source)
+                if source.hasPrefix("http") {
+                    file = Paths.cache.appendingPathComponent(URL(string: source)!.lastPathComponent)
+                    try await Downloader.fetch(DownloadItem(url: source, destination: file))
+                }
+                let info = try Modpack.inspect(file)
+                print("整合包：\(info.name) \(info.version)（\(info.format.rawValue)），MC \(info.gameVersion)，\(info.loader.map { "\($0.kind) \($0.version)" } ?? "原版")，\(info.fileCount) 个文件")
+                let name = "modpack-install-test"
+                try? FileManager.default.removeItem(at: folder.appendingPathComponent("versions/\(name)"))
+                let t0 = Date()
+                let manual = try await Modpack.install(file, name: name, folder: folder, job: Job(title: "pack"))
+                let instance = McInstance(folder: folder, name: name)
+                let mods = (try? FileManager.default.contentsOfDirectory(atPath: instance.gameDir.appendingPathComponent("mods").path)) ?? []
+                print(String(format: "安装用时 %.1f 秒：%@，%d 个 Mod，需手动下载 %d 个", Date().timeIntervalSince(t0), instance.description, mods.count, manual.count))
+                for m in manual { print("  手动下载：\(m.title)（\(m.fileName)）\(m.pageURL)") }
+                for sub in ["resourcepacks", "shaderpacks", "config"] {
+                    let n = (try? FileManager.default.contentsOfDirectory(atPath: instance.gameDir.appendingPathComponent(sub).path).count) ?? 0
+                    print("  \(sub)：\(n)")
+                }
+                let loaderOK = info.loader.map { instance.loaders.contains($0.kind) } ?? true
+                ok = instance.error == nil && loaderOK && mods.count + manual.count >= 1
+                print(ok ? "✔ 安装成功" : "✘ 安装结果不符合预期")
+                // 导出为 .mrpack 并重新读取
+                let out = Paths.cache.appendingPathComponent("export-test.mrpack")
+                let items = Modpack.exportItems(instance)
+                print("  可导出：\(items.map { "\($0.path)\($0.suggested ? "" : "（默认不选）")" }.joined(separator: ", "))")
+                let include = Set(items.filter(\.suggested).map(\.path))
+                let r = try await Modpack.export(instance, name: "Export Test", version: "1.0", summary: "", include: include, to: out, job: Job(title: "export"))
+                let back = try Modpack.inspect(out)
+                let size = (try? out.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                print("  导出：\(r.linked) 个文件引用 Modrinth，\(r.embedded) 个文件打包，\(Job.formatSize(Double(size)))")
+                print("  重新读取：\(back.name)，MC \(back.gameVersion)，\(back.loader.map { "\($0.kind) \($0.version)" } ?? "原版")，\(back.fileCount) 个下载文件")
+                let exportOK = back.gameVersion == info.gameVersion && back.loader?.kind == info.loader?.kind && back.loader?.version == info.loader?.version && r.linked > 0
+                print(exportOK ? "✔ 导出成功" : "✘ 导出结果不符合预期")
+                ok = ok && exportOK
+            } catch {
+                print("✘ \(error.friendly)")
+            }
+        }
+        while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        return ok
+    }
+}
+
+/// `--skin-check`：本地皮肤服务的签名（用 openssl 独立验证）与材质下载
+enum SkinCheck {
+    nonisolated static func run() -> Bool {
+        let sem = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var ok = true
+        Task {
+            defer { sem.signal() }
+            func expect(_ c: Bool, _ name: String) { print("  \(c ? "✔" : "✘") \(name)"); if !c { ok = false } }
+            do {
+                let (skin, slim) = try await Skins.premium("jeb_")
+                expect((try? Skins.validate(Data(contentsOf: skin))) != nil, "获取同名正版皮肤（jeb_，\(slim ? "纤细" : "经典")模型）")
+                let root = try SkinServer.shared.start()
+                let uuid = Account.offlineUUID("KilnSkin")
+                SkinServer.shared.register(uuid: uuid, name: "KilnSkin", skin: skin, slim: slim)
+                let meta = try await Net.json(urls: [root])
+                let profile = try await Net.json(urls: [root + "/sessionserver/session/minecraft/profile/\(uuid)?unsigned=false"])
+                let prop = profile["properties"][0]
+                guard let value = prop["value"].string, let sig = prop["signature"].string, let pem = meta["signaturePublickey"].string else {
+                    expect(false, "档案包含签名的材质属性"); return
+                }
+                let dir = Paths.cache.appendingPathComponent("skincheck-\(UUID().uuidString)")
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: dir) }
+                try Data(value.utf8).write(to: dir.appendingPathComponent("value"))
+                try Data(base64Encoded: sig)!.write(to: dir.appendingPathComponent("sig"))
+                try Data(pem.utf8).write(to: dir.appendingPathComponent("pub.pem"))
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+                p.arguments = ["dgst", "-sha1", "-verify", dir.appendingPathComponent("pub.pem").path,
+                               "-signature", dir.appendingPathComponent("sig").path, dir.appendingPathComponent("value").path]
+                let out = Pipe(); p.standardOutput = out; p.standardError = out
+                try p.run(); p.waitUntilExit()
+                let result = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                expect(p.terminationStatus == 0, "签名通过 openssl 验证（\(result)）")
+                let textures = try JSON(data: Data(base64Encoded: value)!)
+                let url = textures["textures"]["SKIN"]["url"].string ?? ""
+                let png = try await Net.data([url])
+                expect(png == (try Data(contentsOf: skin)), "材质地址可下载且内容一致：\(url)")
+                let names = try await Net.request(root + "/api/profiles/minecraft", body: JSON.array([.string("kilnskin")]).data(pretty: false), contentType: "application/json")
+                expect(names.1[0]["id"].string == uuid, "按名称查询 UUID")
+                let joined = try await Net.json(urls: [root + "/sessionserver/session/minecraft/hasJoined?username=KilnSkin&serverId=x"])
+                expect(joined["id"].string == uuid, "局域网联机验证（hasJoined）")
+                // 外置登录：只输入域名也能通过 ALI 找到 API 地址
+                let ls = try await Yggdrasil.resolve("littleskin.cn")
+                expect(ls.root == "https://littleskin.cn/api/yggdrasil" && Yggdrasil.serverName(ls.meta, root: ls.root) == "LittleSkin",
+                       "外置登录地址解析：littleskin.cn → \(ls.root)（\(Yggdrasil.serverName(ls.meta, root: ls.root))）")
+                let jar = try await AuthlibInjector.ensure()
+                expect(FileManager.default.fileExists(atPath: jar.path), "authlib-injector 已就绪")
+            } catch {
+                print("  ✘ \(error.friendly)")
+                ok = false
+            }
+        }
+        while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        print(ok ? "全部通过" : "存在失败项")
+        return ok
     }
 }

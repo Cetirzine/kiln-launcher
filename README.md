@@ -2,6 +2,16 @@
 
 # Kiln
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Swift-5.9+-F05138?logo=swift&logoColor=white" alt="Swift">
+  <img src="https://img.shields.io/badge/macOS-14.0+-0A7AFF?logo=apple&logoColor=white" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/Apple_Silicon-native-34C759?logo=apple&logoColor=white" alt="Apple Silicon">
+  <a href="https://github.com/Cetirzine/kiln-launcher/releases/latest"><img src="https://img.shields.io/github/v/release/Cetirzine/kiln-launcher?logo=github&label=release" alt="Release"></a>
+  <a href="https://github.com/Cetirzine/kiln-launcher/releases"><img src="https://img.shields.io/github/downloads/Cetirzine/kiln-launcher/total?logo=github&label=downloads" alt="Downloads"></a>
+  <a href="https://github.com/Cetirzine/kiln-launcher/stargazers"><img src="https://img.shields.io/github/stars/Cetirzine/kiln-launcher?logo=github" alt="Stars"></a>
+  <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-PolyForm_Strict_1.0.0-blue" alt="License"></a>
+</p>
+
 [English](README.en.md)
 
 为 Mac 与 Apple 芯片打造的 Minecraft: Java Edition 启动器，SwiftUI 原生实现。
@@ -36,10 +46,14 @@
 
 - 原版、Fabric、Quilt、Forge、NeoForge 安装（Forge / NeoForge 运行安装器 processors，思路参考 [HMCL](https://github.com/HMCL-dev/HMCL)）
 - 安装 Forge 时可同时加装 OptiFine 与 LiteLoader（只在该游戏版本有对应组件时显示）
-- 离线账号与微软账号（设备代码登录，刷新令牌保存在钥匙串）；多账号一键切换（菜单栏 ⌃⌘1～9），每个版本可固定使用某个账号
+- 离线账号、微软账号与外置登录（LittleSkin 等 authlib-injector 皮肤站，不保存密码）；多账号一键切换（⌃⌘1～9），每个版本可固定使用某个账号
+- 皮肤：离线账号可使用本地皮肤或同名正版玩家的皮肤；微软账号可上传皮肤、切换披风
 - 自动选择 / 下载 Java（Mojang 官方运行时、Azul Zulu）
 - 版本独立游戏目录、独立 Java / 内存 / 参数设置
-- Modrinth 与 CurseForge（经 MCIM 镜像，可填写官方 API 密钥）的 Mod、资源包、光影搜索与下载，Mod 可按加载器（Fabric、Forge、NeoForge、Quilt）筛选；本地 Mod 启用 / 禁用
+- Modrinth 与 CurseForge（经 MCIM 镜像，可填写官方 API 密钥）的 Mod、资源包、光影搜索与下载，Mod 可按加载器筛选；安装时自动补全前置 Mod
+- 已安装的 Mod 自动识别并检查更新，可逐个或一键更新
+- 整合包：安装 Modrinth（.mrpack）与 CurseForge 整合包，导出为 .mrpack；作者禁止第三方下载的文件会优先从 Modrinth 获取同一文件
+- 版本重命名、复制，存档导入导出，资源包、光影与截图管理
 - Mod 中文名：英文名后显示中文名，可用中文、拼音或拼音首字母搜索（如 `jxdl` → 机械动力）
 - 游戏日志（解析 log4j XML）、崩溃原因分析、导出启动脚本
 - 自动检查新版本，确认后下载、校验并替换自身
@@ -140,5 +154,15 @@ Kiln 以 [PolyForm Strict License 1.0.0](LICENSE.md) 提供：仅限非商业用
 - [MetalUniversal](https://github.com/EternityQwQ/MetalUniversal) / Metallum
 - [MinecraftMachina/lwjgl](https://github.com/MinecraftMachina/lwjgl)（LWJGL 2 的 arm64 构建）
 - [BMCLAPI](https://bmclapi.bangbang93.com)、[Modrinth](https://modrinth.com)、[Azul Zulu](https://www.azul.com/downloads/)
+- [authlib-injector](https://github.com/yushijinhun/authlib-injector)（外置登录与离线皮肤，运行时下载）
+
+## Star History
+
+<a href="https://star-history.com/#Cetirzine/kiln-launcher&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Cetirzine/kiln-launcher&type=Date&theme=dark">
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Cetirzine/kiln-launcher&type=Date">
+  </picture>
+</a>
 
 Minecraft 是 Mojang Studios 的商标。本软件不是 Mojang 或 Microsoft 的官方产品。
