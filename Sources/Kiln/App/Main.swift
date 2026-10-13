@@ -46,6 +46,9 @@ enum Entry {
         if args.contains("--skin-check") {
             exit(SkinCheck.run() ? 0 : 1)
         }
+        if args.contains("--profile-check") {
+            exit(ProfileCheck.run() ? 0 : 1)
+        }
         if args.contains("--mod-core-check") {
             exit(ModCoreCheck.run() ? 0 : 1)
         }

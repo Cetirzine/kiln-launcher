@@ -155,8 +155,8 @@ package final class AccountStore {
 
     package func remove(_ acc: Account) {
         accounts.removeAll { $0.id == acc.id }
-        if acc.kind == .microsoft { Keychain.delete(acc.uuid) }
-        if acc.kind == .yggdrasil { Keychain.delete(Self.yggKey(acc)) }
+        if acc.kind == .microsoft { TokenStore.delete(acc.uuid) }
+        if acc.kind == .yggdrasil { TokenStore.delete(Self.yggKey(acc)) }
         if selectedId == acc.id { selectedId = accounts.first?.id }
         save()
     }
@@ -169,7 +169,7 @@ package final class AccountStore {
         } else {
             accounts.insert(acc, at: 0)
         }
-        Keychain.set(refreshToken, for: acc.uuid)
+        TokenStore.set(refreshToken, for: acc.uuid)
         tokenCache[acc.uuid] = (accessToken, expires)
         selectedId = acc.id
         save()
@@ -186,14 +186,14 @@ package final class AccountStore {
     static func yggKey(_ acc: Account) -> String { "yggdrasil|\(acc.id)" }
 
     private func yggTokens(_ acc: Account) -> (access: String, client: String)? {
-        guard let s = Keychain.get(Self.yggKey(acc)), let j = try? JSON(data: Data(s.utf8)),
+        guard let s = TokenStore.get(Self.yggKey(acc)), let j = try? JSON(data: Data(s.utf8)),
               let a = j["accessToken"].string, let c = j["clientToken"].string else { return nil }
         return (a, c)
     }
 
     private func saveYggTokens(_ acc: Account, access: String, client: String) {
         let j = JSON.object(["accessToken": .string(access), "clientToken": .string(client)])
-        Keychain.set(String(decoding: j.data(pretty: false), as: UTF8.self), for: Self.yggKey(acc))
+        TokenStore.set(String(decoding: j.data(pretty: false), as: UTF8.self), for: Self.yggKey(acc))
     }
 
     /// 添加（或重新登录）外置登录账号
@@ -263,7 +263,7 @@ package final class AccountStore {
             if let c = tokenCache[acc.uuid], c.expires > Date().addingTimeInterval(300) {
                 return LoginResult(name: acc.name, uuid: acc.uuid, accessToken: c.token, userType: "msa")
             }
-            guard let refresh = Keychain.get(acc.uuid) else {
+            guard let refresh = TokenStore.get(acc.uuid) else {
                 setNeedsLogin(acc, true)
                 throw LauncherError(T("正版登录已过期，请重新登录。", "Your Microsoft login expired. Please sign in again."))
             }
@@ -275,7 +275,7 @@ package final class AccountStore {
                 if !Net.isTransient(error) { setNeedsLogin(acc, true) }
                 throw error
             }
-            Keychain.set(r.refreshToken, for: acc.uuid)
+            TokenStore.set(r.refreshToken, for: acc.uuid)
             tokenCache[acc.uuid] = (r.accessToken, r.expires)
             if let i = accounts.firstIndex(where: { $0.id == acc.id }), accounts[i].name != r.name || accounts[i].needsLogin == true {
                 accounts[i].name = r.name
@@ -423,24 +423,55 @@ package enum MicrosoftAuth {
     }
 }
 
-// MARK: - 钥匙串
+// MARK: - 令牌
 
-package enum Keychain {
+/// 登录令牌（微软的刷新令牌、外置登录的令牌）存在本机的 Tokens.json 里，文件权限 600，只有当前用户能读。
+///
+/// 以前存在钥匙串里，但 Kiln 没有固定的开发者签名，每次更新后系统都把它当成新 App，弹窗要钥匙串密码。
+/// 现在不再用钥匙串；老版本存进去的令牌在第一次用到时悄悄读出来搬到文件里（读不到也不弹窗，只是需要重新登录一次）。
+package enum TokenStore {
     package static let service = "\(AppInfo.shortName).MicrosoftRefreshToken"
+    private static let lock = NSLock()
+    package static var file: URL { Paths.support.appendingPathComponent("Tokens.json") }
+
+    private static func load() -> [String: String] {
+        guard let data = try? Data(contentsOf: file), let d = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+        return d
+    }
+
+    private static func write(_ d: [String: String]) {
+        guard let data = try? JSONEncoder().encode(d) else { return }
+        try? data.write(to: file, options: [.atomic])
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
 
     package static func set(_ value: String, for account: String) {
-        delete(account)
-        let q: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: Data(value.utf8),
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
-        ]
-        SecItemAdd(q as CFDictionary, nil)
+        lock.lock(); defer { lock.unlock() }
+        var d = load()
+        d[account] = value
+        write(d)
     }
 
     package static func get(_ account: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        var d = load()
+        if let v = d[account] { return v }
+        // 老版本存在钥匙串里的令牌：不弹窗地读一次，读到就搬过来
+        guard let v = legacyGet(account) else { return nil }
+        d[account] = v
+        write(d)
+        return v
+    }
+
+    package static func delete(_ account: String) {
+        lock.lock(); defer { lock.unlock() }
+        var d = load()
+        d[account] = nil
+        write(d)
+    }
+
+    /// 从钥匙串读老令牌；需要输入密码时直接放弃，不弹窗
+    private static func legacyGet(_ account: String) -> String? {
         let q: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -449,16 +480,10 @@ package enum Keychain {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var out: AnyObject?
+        // 关掉钥匙串的交互：没有权限时立刻返回失败，而不是弹窗要密码
+        SecKeychainSetUserInteractionAllowed(false)
+        defer { SecKeychainSetUserInteractionAllowed(true) }
         guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
         return String(data: d, encoding: .utf8)
-    }
-
-    package static func delete(_ account: String) {
-        let q: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(q as CFDictionary)
     }
 }

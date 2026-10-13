@@ -181,8 +181,8 @@ struct YggdrasilLoginSheet: View {
                         SecureField("", text: $password).textFieldStyle(.roundedBorder).onSubmit(login)
                     }
                 }
-                Text(T("密码只用于这一次登录，Kiln 不会保存密码；登录后只在钥匙串中保存服务器下发的令牌。",
-                       "Your password is only used for this sign-in and is never stored. Kiln keeps only the token issued by the server, in the Keychain."))
+                Text(T("密码只用于这一次登录，Kiln 不会保存密码；登录后只在本机保存服务器下发的令牌。",
+                       "Your password is only used for this sign-in and is never stored. Kiln keeps only the token issued by the server, on this Mac."))
                     .font(.system(size: 11.5)).foregroundStyle(Theme.text3).fixedSize(horizontal: false, vertical: true)
             }
             if let error {
@@ -322,6 +322,12 @@ private struct OfflineSkinEditor: View {
             }
             .frame(width: 96, height: 176)
             .clipShape(RoundedRectangle(cornerRadius: 3))
+            .dropDestination(for: URL.self) { urls, _ in
+                guard let url = urls.first else { return false }
+                mode = .file
+                use(url)
+                return true
+            }
             VStack(alignment: .leading, spacing: 10) {
                 switch mode {
                 case .none:
@@ -331,7 +337,7 @@ private struct OfflineSkinEditor: View {
                     Button(T("选择皮肤图片…", "Choose skin image…")) { choose() }.buttonStyle(.kiln)
                     Segmented(items: [(false, T("经典（Steve）", "Classic (Steve)")), (true, T("纤细（Alex）", "Slim (Alex)"))], selection: $slim)
                         .onChange(of: slim) { _, v in previewSlim = v }
-                    Text(T("64×64 或 64×32 的 PNG。", "A 64×64 or 64×32 PNG."))
+                    Text(T("64×64 或 64×32 的 PNG，也可以拖到左边。", "A 64×64 or 64×32 PNG; you can also drop it on the left."))
                         .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
                 case .premium:
                     HStack {
@@ -345,6 +351,12 @@ private struct OfflineSkinEditor: View {
                 Text(T("离线皮肤由 Kiln 在本机通过 authlib-injector 提供，只在你自己的游戏中显示。",
                        "Kiln serves offline skins locally through authlib-injector; only you see them in your game."))
                     .font(.system(size: 11)).foregroundStyle(Theme.text3).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        if mode == .file {
+            SkinLibraryStrip(selected: file) { item in
+                file = item.file; slim = item.slim; previewSlim = item.slim
+                preview = SkinRender.load(item.url); error = nil
             }
         }
         HStack {
@@ -374,8 +386,12 @@ private struct OfflineSkinEditor: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.png]
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        use(url)
+    }
+
+    private func use(_ url: URL) {
         do {
-            file = try Skins.importSkin(url)
+            file = try Skins.addToLibrary(data: Data(contentsOf: url), slim: slim, label: url.deletingPathExtension().lastPathComponent).file
             preview = SkinRender.load(Skins.file(file!))
             previewSlim = slim
             error = nil
@@ -410,15 +426,68 @@ private struct OfflineSkinEditor: View {
     }
 }
 
+/// 皮肤库：用过的皮肤一排小头像，点一下换上；右键可以移除
+struct SkinLibraryStrip: View {
+    var selected: String?
+    let onPick: (Skins.SavedSkin) -> Void
+    @PState private var items: [Skins.SavedSkin] = []
+    @PState private var faces: [String: CGImage] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(T("皮肤库", "Skin library")).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text2)
+            if items.isEmpty {
+                Text(T("上传或导入过的皮肤会留在这里，之后一键换回去。", "Skins you upload or import are kept here so you can switch back in one click."))
+                    .font(.system(size: 11)).foregroundStyle(Theme.text3).fixedSize(horizontal: false, vertical: true)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(items) { item in
+                            Button { onPick(item) } label: {
+                                ZStack {
+                                    Theme.panel2
+                                    if let f = faces[item.file] { PixelImage(image: f).padding(4) }
+                                }
+                                .frame(width: 34, height: 34)
+                                .overlay(Rectangle().stroke(selected == item.file ? Theme.accent : Theme.stroke, lineWidth: selected == item.file ? 2 : 1))
+                            }
+                            .buttonStyle(.plain)
+                            .help(item.label + (item.slim ? T("（纤细）", " (slim)") : ""))
+                            .contextMenu {
+                                Button(T("从皮肤库移除", "Remove from library")) { Skins.removeFromLibrary(item); reload() }
+                                Button(T("在访达中显示", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+                            }
+                        }
+                    }
+                    .padding(2)
+                }
+            }
+        }
+        .onAppear(perform: reload)
+    }
+
+    func reload() {
+        items = Skins.library()
+        for item in items where faces[item.file] == nil {
+            if let img = SkinRender.load(item.url), let f = SkinRender.face(img) { faces[item.file] = f }
+        }
+    }
+}
+
+/// 微软账号的皮肤：本地图片、别的正版玩家的皮肤、皮肤库三种来源；换之前先把当前皮肤存进皮肤库
 private struct MicrosoftSkinEditor: View {
     let account: Account
     @Binding var show: Bool
     @PState private var profile: Skins.MinecraftProfile?
     @PState private var current: CGImage?
     @PState private var newFile: URL?
+    @PState private var newLabel = ""
+    @PState private var librarySelection: String?
+    @PState private var playerName = ""
     @PState private var slim = false
     @PState private var cape: String = ""
     @PState private var busy = false
+    @PState private var dropping = false
     @PState private var error: String?
 
     var body: some View {
@@ -430,13 +499,26 @@ private struct MicrosoftSkinEditor: View {
                 } else if profile == nil && error == nil {
                     ProgressView().controlSize(.small)
                 }
+                if dropping { Rectangle().stroke(Theme.accent, lineWidth: 2) }
             }
             .frame(width: 96, height: 176)
             .clipShape(RoundedRectangle(cornerRadius: 3))
+            .dropDestination(for: URL.self) { urls, _ in
+                guard let url = urls.first else { return false }
+                pick(url, label: url.deletingPathExtension().lastPathComponent)
+                return true
+            } isTargeted: { dropping = $0 }
+            .help(T("也可以把皮肤图片拖到这里", "You can also drop a skin image here"))
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Button(T("选择新皮肤…", "Choose new skin…")) { choose() }.buttonStyle(.kiln)
+                    Button(T("选择图片…", "Choose image…")) { choose() }.buttonStyle(.kiln)
                     Button(T("恢复默认", "Reset")) { run { try await Skins.reset(token: $0) } }.buttonStyle(.kiln)
+                }
+                HStack {
+                    TextField(T("用某个正版玩家的皮肤", "Use a player's skin"), text: $playerName)
+                        .textFieldStyle(.roundedBorder).onSubmit(fetchPlayer)
+                    Button(T("获取", "Get"), action: fetchPlayer).buttonStyle(.kiln)
+                        .disabled(playerName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 Segmented(items: [(false, T("经典（Steve）", "Classic (Steve)")), (true, T("纤细（Alex）", "Slim (Alex)"))], selection: $slim)
                 if let capes = profile?.capes, !capes.isEmpty {
@@ -449,6 +531,9 @@ private struct MicrosoftSkinEditor: View {
                 }
                 if let error { Text(error).font(.system(size: 11.5)).foregroundStyle(Theme.red).fixedSize(horizontal: false, vertical: true) }
             }
+        }
+        SkinLibraryStrip(selected: librarySelection) { item in
+            newFile = item.url; newLabel = item.label; slim = item.slim; librarySelection = item.file; error = nil
         }
         HStack {
             Spacer()
@@ -473,11 +558,30 @@ private struct MicrosoftSkinEditor: View {
         } catch { self.error = error.friendly }
     }
 
+    private func pick(_ url: URL, label: String, slim: Bool? = nil) {
+        do {
+            try Skins.validate(Data(contentsOf: url))
+            newFile = url; newLabel = label; librarySelection = nil; error = nil
+            if let slim { self.slim = slim }
+        } catch { self.error = error.friendly }
+    }
+
     private func choose() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.png]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try Skins.validate(Data(contentsOf: url)); newFile = url; error = nil } catch { self.error = error.friendly }
+        pick(url, label: url.deletingPathExtension().lastPathComponent)
+    }
+
+    private func fetchPlayer() {
+        let name = playerName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        Task { @MainActor in
+            do {
+                let (url, s) = try await Skins.premium(name)
+                pick(url, label: name, slim: s)
+            } catch { self.error = error.friendly }
+        }
     }
 
     private func run(_ action: @escaping (String) async throws -> Void) {
@@ -485,16 +589,25 @@ private struct MicrosoftSkinEditor: View {
         Task { @MainActor in
             defer { busy = false }
             do {
+                await backupCurrent()
                 try await action(try await token())
                 newFile = nil
                 await load()
+                FaceCache.shared.invalidate()
                 Hint.show(T("已更新", "Updated"), .green)
             } catch { self.error = error.friendly }
         }
     }
 
+    /// 换皮肤之前把现在的皮肤存进皮肤库，换错了还能换回来
+    private func backupCurrent() async {
+        guard let url = profile?.skinURL,
+              let data = try? await Net.data([url.replacingOccurrences(of: "http://", with: "https://")]) else { return }
+        try? Skins.addToLibrary(data: data, slim: profile?.slim ?? false, label: T("\(account.name) 之前的皮肤", "\(account.name)'s previous skin"))
+    }
+
     private func apply() {
-        let file = newFile, slim = slim, cape = cape
+        let file = newFile, slim = slim, cape = cape, label = newLabel
         let skinChanged = file != nil || slim != profile?.slim
         let capeChanged = cape != (profile?.capes.first(where: \.active)?.id ?? "")
         busy = true
@@ -504,7 +617,9 @@ private struct MicrosoftSkinEditor: View {
                 let t = try await token()
                 if skinChanged {
                     if let file {
+                        await backupCurrent()
                         try await Skins.upload(token: t, skin: file, slim: slim)
+                        try? Skins.addToLibrary(data: Data(contentsOf: file), slim: slim, label: label.isEmpty ? account.name : label)
                     } else if let url = profile?.skinURL {
                         // 只更换模型：重新上传当前皮肤
                         let tmp = Paths.cache.appendingPathComponent("current-skin.png")
@@ -513,8 +628,198 @@ private struct MicrosoftSkinEditor: View {
                     }
                 }
                 if capeChanged { try await Skins.setCape(token: t, id: cape.isEmpty ? nil : cape) }
+                FaceCache.shared.invalidate()
                 Hint.show(T("皮肤已更新", "Skin updated"), .green)
                 show = false
+            } catch { self.error = error.friendly }
+        }
+    }
+}
+
+// MARK: - 正版档案
+
+/// 微软账号的档案：拥有的游戏、联机与聊天权限、封禁状态，以及改名（30 天一次，输入时实时检查名称能不能用）
+struct ProfileSheet: View {
+    let account: Account
+    @Binding var show: Bool
+    @PState private var face: CGImage?
+    @PState private var ownership: MinecraftServices.Ownership?
+    @PState private var attributes: MinecraftServices.Attributes?
+    @PState private var nameChange: MinecraftServices.NameChange?
+    @PState private var loadError: String?
+    @PState private var newName = ""
+    @PState private var nameStatus: MinecraftServices.NameStatus?
+    @PState private var checking = false
+    @PState private var busy = false
+    @PState private var confirming = false
+    @PState private var error: String?
+
+    private var current: Account { AccountStore.shared.account(id: account.id) ?? account }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Theme.panel2
+                    if let face { PixelImage(image: face) }
+                }
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(current.name).font(.system(size: 17, weight: .bold)).foregroundStyle(Theme.text)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(current.uuid, forType: .string)
+                        Hint.show(T("已复制 UUID", "UUID copied"), .green)
+                    } label: {
+                        Text(current.uuid).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.text3)
+                    }
+                    .buttonStyle(.plain).help(T("复制 UUID", "Copy UUID"))
+                }
+            }
+            if let loadError {
+                Text(loadError).font(.system(size: 12)).foregroundStyle(Theme.red).fixedSize(horizontal: false, vertical: true)
+            } else if ownership == nil && attributes == nil {
+                HStack(spacing: 6) { ProgressView().controlSize(.small); Text(T("正在读取……", "Loading…")).font(.system(size: 12)).foregroundStyle(Theme.text2) }
+            }
+            if let o = ownership { row(T("游戏", "Game"), ownershipText(o)) }
+            if let a = attributes { statusRows(a) }
+            Divider()
+            renameSection
+            HStack {
+                Spacer()
+                if busy { ProgressView().controlSize(.small) }
+                Button(T("关闭", "Close")) { show = false }.buttonStyle(.kiln)
+            }
+        }
+        .padding(22)
+        .frame(width: 440)
+        .task { await load() }
+    }
+
+    private func row(_ title: String, _ value: String, color: Color = Theme.text) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text2).frame(width: 52, alignment: .leading)
+            Text(value).font(.system(size: 12.5)).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func ownershipText(_ o: MinecraftServices.Ownership) -> String {
+        var s = o.javaPurchased ? T("Minecraft: Java 版（已购买）", "Minecraft: Java Edition (purchased)")
+                                : T("Minecraft: Java 版（Xbox Game Pass）", "Minecraft: Java Edition (Xbox Game Pass)")
+        let extra = [o.bedrock ? T("基岩版", "Bedrock Edition") : nil, o.dungeons ? "Dungeons" : nil, o.legends ? "Legends" : nil].compactMap { $0 }
+        if !extra.isEmpty { s += T("；还拥有 ", "; also owns ") + extra.joined(separator: T("、", ", ")) }
+        return s
+    }
+
+    @ViewBuilder private func statusRows(_ a: MinecraftServices.Attributes) -> some View {
+        if let ban = a.multiplayerBan {
+            let until = ban.expires.map { T("，到 \(Self.dateText($0)) 解除", " until \(Self.dateText($0))") } ?? T("（永久）", " (permanent)")
+            row(T("联机", "Online"), T("已被禁止进入多人游戏和 Realms", "Banned from multiplayer and Realms") + until
+                + (ban.reason.map { T("。原因：", ". Reason: ") + $0 } ?? ""), color: Theme.red)
+        } else {
+            let items = [(T("多人游戏", "Multiplayer"), a.multiplayer), ("Realms", a.realms), (T("聊天", "Chat"), a.chat)]
+            let off = items.filter { !$0.1 }.map(\.0)
+            row(T("联机", "Online"), off.isEmpty ? T("多人游戏、Realms 和聊天都可以正常使用", "Multiplayer, Realms and chat are all available")
+                                               : T("已关闭：", "Turned off: ") + off.joined(separator: T("、", ", ")) + T("（可在 Xbox 隐私设置或家庭设置中修改）", " (change it in Xbox privacy or family settings)"),
+                color: off.isEmpty ? Theme.green : Theme.yellow)
+        }
+    }
+
+    private var renameSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(T("修改玩家名称", "Change player name")).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text2)
+            HStack {
+                TextField(T("新名称", "New name"), text: $newName)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(rename)
+                if confirming {
+                    Button(T("取消", "Cancel")) { confirming = false }.buttonStyle(.kiln)
+                }
+                Button(confirming ? T("确认改名", "Confirm") : T("改名", "Rename"), action: rename).buttonStyle(.kilnPrimary)
+                    .disabled(busy || nameStatus != .available || nameChange?.allowed == false)
+            }
+            Text(renameHint.0).font(.system(size: 11)).foregroundStyle(renameHint.1).fixedSize(horizontal: false, vertical: true)
+            if let error { Text(error).font(.system(size: 11.5)).foregroundStyle(Theme.red).fixedSize(horizontal: false, vertical: true) }
+        }
+        .task(id: newName) { confirming = false; await check() }
+    }
+
+    private var renameHint: (String, Color) {
+        let n = newName.trimmingCharacters(in: .whitespaces)
+        if confirming {
+            return (T("把 \(current.name) 改成 \(n)？改名后 30 天内不能再改。", "Change \(current.name) to \(n)? You won't be able to change it again for 30 days."), Theme.yellow)
+        }
+        if let nc = nameChange, !nc.allowed {
+            return (T("距离上次改名还不到 30 天", "It's been less than 30 days since your last name change")
+                    + (nc.nextChange.map { T("，\(Self.dateText($0)) 以后可以再改。", "; you can change it again after \(Self.dateText($0)).") } ?? "。"), Theme.yellow)
+        }
+        if n.isEmpty { return (T("每 30 天可以改一次名，改名后旧名称会保留 37 天才放出给别人用。", "You can change your name once every 30 days. Your old name is held for 37 days before others can take it."), Theme.text3) }
+        if !MinecraftServices.isValidName(n) { return (T("只能用 3～16 个字母、数字或下划线", "Use 3–16 letters, digits or underscores"), Theme.red) }
+        if n.caseInsensitiveCompare(current.name) == .orderedSame && n != current.name { return (T("只改大小写也算一次改名", "Changing only the capitalization still counts as a name change"), Theme.text3) }
+        if checking { return (T("正在检查……", "Checking…"), Theme.text3) }
+        switch nameStatus {
+        case .available: return (T("\(n) 可以使用", "\(n) is available"), Theme.green)
+        case .taken: return (T("\(n) 已经被别人用了", "\(n) is already taken"), Theme.red)
+        case .notAllowed: return (T("\(n) 不能使用", "\(n) isn't allowed"), Theme.red)
+        case nil: return ("", Theme.text3)
+        }
+    }
+
+    static func dateText(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f.string(from: d)
+    }
+
+    private func token() async throws -> String { try await AccountStore.shared.login(current).accessToken }
+
+    private func load() async {
+        face = await FaceCache.shared.face(for: account)
+        do {
+            let t = try await token()
+            async let o = try? MinecraftServices.ownership(token: t)
+            async let a = try? MinecraftServices.attributes(token: t)
+            async let n = try? MinecraftServices.nameChange(token: t)
+            (ownership, attributes, nameChange) = await (o, a, n)
+            if ownership == nil && attributes == nil && nameChange == nil {
+                loadError = T("读取档案失败，请检查网络后重试。", "Couldn't load the profile. Check your network and try again.")
+            }
+        } catch { loadError = error.friendly }
+    }
+
+    private func check() async {
+        nameStatus = nil
+        let n = newName.trimmingCharacters(in: .whitespaces)
+        guard MinecraftServices.isValidName(n), n != current.name else { return }
+        checking = true
+        defer { checking = false }
+        // 停止输入半秒后再查，避免每打一个字就请求一次
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        guard !Task.isCancelled else { return }
+        do {
+            let status = try await MinecraftServices.nameStatus(n, token: try await token())
+            if !Task.isCancelled { nameStatus = status }
+        } catch { if !Task.isCancelled { self.error = error.friendly } }
+    }
+
+    private func rename() {
+        let n = newName.trimmingCharacters(in: .whitespaces)
+        guard nameStatus == .available, !busy else { return }
+        // 先按一次“改名”出确认，再按一次才真的改
+        guard confirming else { confirming = true; return }
+        confirming = false
+        Task { @MainActor in
+            busy = true
+            error = nil
+            defer { busy = false }
+            do {
+                let name = try await MinecraftServices.changeName(to: n, token: try await token())
+                AccountStore.shared.updateName(account, to: name)
+                FaceCache.shared.invalidate()
+                newName = ""
+                nameChange = try? await MinecraftServices.nameChange(token: try await token())
+                Hint.show(T("已改名为 \(name)", "Renamed to \(name)"), .green)
             } catch { self.error = error.friendly }
         }
     }

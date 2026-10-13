@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 
 /// 外置登录（authlib-injector / Yggdrasil 协议），如 LittleSkin。
-/// 只保存服务器下发的令牌（钥匙串），不保存密码；令牌失效时再请用户输入密码。
+/// 只保存服务器下发的令牌（本机的 Tokens.json），不保存密码；令牌失效时再请用户输入密码。
 package enum Yggdrasil {
     package struct Profile: Hashable, Sendable { package let id: String; package let name: String }
 

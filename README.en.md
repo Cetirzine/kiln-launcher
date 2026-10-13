@@ -22,6 +22,7 @@ A native macOS launcher for Minecraft: Java Edition, built with SwiftUI and tune
 - Finds, selects or downloads the right Java runtime (Mojang runtimes, Azul Zulu for arm64 Java 8)
 - Signs in with a Microsoft account (OAuth 2.0 device code flow), an authlib-injector skin site such as LittleSkin (passwords are never stored), or an offline profile; switch accounts with ⌃⌘1–9 and pin an account to an instance
 - Skins: local or same-name player skins for offline accounts; upload skins and switch capes for Microsoft accounts
+- Microsoft profile: change your player name (with a live availability check and the next allowed date), and see owned games (purchased or Game Pass), multiplayer / Realms / chat permissions and multiplayer bans
 - Searches and downloads mods, resource packs and shaders from Modrinth and CurseForge (via the MCIM mirror, or with your own API key), installing required dependencies automatically
 - Identifies installed mods and updates them one by one or all at once
 - Installs Modrinth (.mrpack) and CurseForge modpacks and exports instances as .mrpack
@@ -46,9 +47,10 @@ Downloads use the official servers by default with the BMCLAPI mirror as a fallb
 
 ## Microsoft sign-in and privacy
 
+- Kiln's built-in Client ID is approved for the Minecraft API, so Microsoft sign-in works out of the box
 - Public client, device code flow against the `consumers` endpoint, scopes `XboxLive.signin offline_access`
 - Tokens are exchanged only with Microsoft, Xbox Live and Minecraft services, to obtain the Minecraft access token and profile needed to launch the game
-- The refresh token is stored locally in the macOS Keychain
+- The refresh token is stored locally in `~/Library/Application Support/Kiln/Tokens.json`, readable only by your user account (no Keychain password prompts after updates)
 - The launcher has no backend server and collects no user data
 
 ## Building

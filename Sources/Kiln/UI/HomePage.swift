@@ -358,6 +358,7 @@ struct AccountPopover: View {
     @PState private var yggLogin = false
     @PState private var yggAccount: Account?
     @PState private var skinAccount: Account?
+    @PState private var profileAccount: Account?
 
     var body: some View {
         let instance = state.selectedInstance
@@ -390,9 +391,20 @@ struct AccountPopover: View {
                                        if acc.kind == .yggdrasil { yggAccount = acc; yggLogin = true } else { msLogin = true }
                                    },
                                    onSkin: { skinAccount = acc },
+                                   onProfile: { profileAccount = acc },
                                    onDelete: { delete(acc) })
                     }
                 }
+            }
+            // 当前账号的常用操作：换皮肤、正版档案
+            if let acc = state.effectiveAccount {
+                HStack(spacing: 14) {
+                    Button(T("更换皮肤", "Change skin")) { skinAccount = acc }
+                    if acc.kind == .microsoft {
+                        Button(T("正版档案与改名", "Profile & name")) { profileAccount = acc }
+                    }
+                }
+                .buttonStyle(.plain).foregroundStyle(Theme.accent).font(.system(size: 12))
             }
             Divider()
             Text(T("添加离线账号", "Add offline account")).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text2)
@@ -426,6 +438,9 @@ struct AccountPopover: View {
         .sheet(isPresented: $yggLogin) { YggdrasilLoginSheet(account: yggAccount, show: $yggLogin) }
         .sheet(item: $skinAccount) { acc in
             SkinSheet(account: acc, show: Binding(get: { skinAccount != nil }, set: { if !$0 { skinAccount = nil } }))
+        }
+        .sheet(item: $profileAccount) { acc in
+            ProfileSheet(account: acc, show: Binding(get: { profileAccount != nil }, set: { if !$0 { profileAccount = nil } }))
         }
     }
 
@@ -499,6 +514,7 @@ private struct AccountRow: View {
     let onRename: () -> Void
     let onRelogin: () -> Void
     var onSkin: () -> Void = {}
+    var onProfile: () -> Void = {}
     let onDelete: () -> Void
     @Environment(AppState.self) private var state
 
@@ -531,6 +547,9 @@ private struct AccountRow: View {
             }
             Divider()
             Button(T("皮肤…", "Skin…")) { onSkin() }
+            if account.kind == .microsoft {
+                Button(T("正版档案与改名…", "Profile & name…")) { onProfile() }
+            }
             if account.kind == .offline {
                 Button(T("修改名称…", "Rename…")) { onRename() }
             } else {
@@ -579,6 +598,7 @@ struct MicrosoftLoginSheet: View {
     @PState private var status = T("请稍候……", "Please wait…")
     @PState private var failed = false
     @PState private var task: Task<Void, Never>?
+    @PState private var copied = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -591,7 +611,7 @@ struct MicrosoftLoginSheet: View {
                     .textSelection(.enabled)
                     .padding(.horizontal, 20).padding(.vertical, 8)
                     .background(Theme.panel2, in: RoundedRectangle(cornerRadius: 3))
-                Button(T("复制代码并打开网页", "Copy code and open page")) { copyAndOpen(code) }.buttonStyle(.kilnPrimary)
+                Button(copied ? T("已复制", "Copied") : T("复制代码", "Copy code")) { copy(code) }.buttonStyle(.kilnPrimary)
             }
             HStack(spacing: 6) {
                 if !failed { ProgressView().controlSize(.small) }
@@ -606,10 +626,11 @@ struct MicrosoftLoginSheet: View {
         .onDisappear { task?.cancel() }
     }
 
-    private func copyAndOpen(_ c: MicrosoftAuth.DeviceCode) {
+    /// 网页在拿到代码时已经自动打开了，按钮只负责复制
+    private func copy(_ c: MicrosoftAuth.DeviceCode, confirm: Bool = true) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(c.userCode, forType: .string)
-        Links.open(c.verificationURI)
+        if confirm { copied = true }
     }
 
     private func start() {
@@ -617,7 +638,8 @@ struct MicrosoftLoginSheet: View {
             do {
                 let c = try await MicrosoftAuth.requestDeviceCode()
                 code = c
-                copyAndOpen(c)
+                copy(c, confirm: false)
+                Links.open(c.verificationURI)
                 status = T("等待网页登录……", "Waiting for web sign-in…")
                 let tokens = try await MicrosoftAuth.poll(c)
                 status = T("请稍候……", "Please wait…")

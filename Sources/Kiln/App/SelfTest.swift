@@ -100,6 +100,19 @@ enum SelfTest {
         watcher.stop()
         try? FileManager.default.removeItem(at: tmp)
         expect(fired > 0, "文件监视：新建版本文件夹后自动刷新")
+        // 登录令牌存在只有自己能读的文件里，不经过钥匙串
+        let tokenKey = "selftest-\(UUID().uuidString)"
+        TokenStore.set("token-1", for: tokenKey)
+        let perms = (try? FileManager.default.attributesOfItem(atPath: TokenStore.file.path)[.posixPermissions] as? Int) ?? 0
+        let roundTrip = TokenStore.get(tokenKey) == "token-1"
+        TokenStore.delete(tokenKey)
+        expect(roundTrip && TokenStore.get(tokenKey) == nil && perms == 0o600, "登录令牌：读写删除，文件权限 600")
+        // 主页场景：快照、预发布用正式版的场景，1.21 按小版本区分，远古版本用默认场景
+        let scenes: [(String, String)] = [("1.0", "1.0"), ("1.7.10", "1.7"), ("1.8.9", "1.8"), ("1.12.2", "1.12"), ("1.14 Pre-Release 1", "1.14"),
+                                          ("1.20.1", "1.20"), ("1.21.1", "1.21"), ("1.21.4", "1.21.4"), ("1.21.8", "1.21.6"), ("1.21.10", "1.21.9"),
+                                          ("1.21.11-rc1", "1.21.11"), ("26.1.2", "26.1"), ("26.4-snapshot-3", "26.4"), ("b1.7.3", "plains"), ("24w14a", "plains")]
+        let wrong = scenes.filter { DotScenes.scene(for: $0.0).id != $0.1 }
+        expect(wrong.isEmpty, "主页场景按版本选择" + (wrong.isEmpty ? "" : "：\(wrong.map { "\($0.0) → \(DotScenes.scene(for: $0.0).id)" })"))
         print(failures == 0 ? "全部通过" : "\(failures) 项失败")
         return failures == 0
     }
@@ -539,6 +552,34 @@ enum SkinCheck {
         }
         while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
         print(ok ? "全部通过" : "存在失败项")
+        return ok
+    }
+}
+
+/// `--profile-check`：用已登录的第一个微软账号读取正版档案（只读：拥有的游戏、联机权限、改名信息、名称可用性），不改任何东西
+enum ProfileCheck {
+    nonisolated static func run() -> Bool {
+        let sem = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var ok = true
+        Task { @MainActor in
+            defer { sem.signal() }
+            func expect(_ c: Bool, _ name: String) { print("  \(c ? "✔" : "✘") \(name)"); if !c { ok = false } }
+            guard let acc = AccountStore.shared.accounts.first(where: { $0.kind == .microsoft }) else { print("没有微软账号，跳过"); return }
+            do {
+                let t = try await AccountStore.shared.login(acc).accessToken
+                let o = try await MinecraftServices.ownership(token: t)
+                expect(true, "拥有的游戏：Java \(o.javaPurchased ? "已购买" : "Game Pass")，基岩版 \(o.bedrock)，Dungeons \(o.dungeons)，Legends \(o.legends)")
+                let a = try await MinecraftServices.attributes(token: t)
+                expect(true, "联机 \(a.multiplayer)，Realms \(a.realms)，聊天 \(a.chat)，封禁 \(a.multiplayerBan.map { "\($0.expires.map(\.description) ?? "永久") \($0.reason ?? "")" } ?? "无")")
+                let n = try await MinecraftServices.nameChange(token: t)
+                expect(n.changedAt != nil, "上次改名 \(n.changedAt.map(\.description) ?? "-")，现在\(n.allowed ? "可以" : "不能")改名")
+                let taken = try await MinecraftServices.nameStatus("Notch", token: t)
+                expect(taken != .available, "Notch 不可用（\(taken)）")
+                let free = try await MinecraftServices.nameStatus("Kiln_" + String(UUID().uuidString.prefix(8)).replacingOccurrences(of: "-", with: ""), token: t)
+                expect(free == .available, "随机新名称可用（\(free)）")
+            } catch { expect(false, error.friendly) }
+        }
+        while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
         return ok
     }
 }

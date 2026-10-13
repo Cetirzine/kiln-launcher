@@ -325,6 +325,7 @@ struct ArmorMaterial {
     static let netherite = ArmorMaterial(tones: [0x1E1B1E, 0x2B282B, 0x3E3A3E, 0x4D494D, 0x7A6F7A])
     static let turtle = ArmorMaterial(tones: [0x1F4F22, 0x2D7A30, 0x3A9C3D, 0x47BF4A, 0x8FE08A])
     static let gold = ArmorMaterial(tones: [0x7A5A12, 0xB08A1E, 0xD9B02E, 0xF5D74A, 0xFFF39A])
+    static let copper = ArmorMaterial(tones: [0x6E3420, 0x9C4E36, 0xC0644A, 0xE0805A, 0xF5A47E])
 }
 
 /// 穿在身上的护甲（每件可以单独给）
@@ -450,6 +451,7 @@ struct PlayerPose {
     var sneaking = false       // 潜行：腿保持直立，上身往前倾
     var blocking = false       // 举盾：副手的盾挡在身前
     var flying = false         // 鞘翅滑翔：身体放平、头朝前、腿在后，鞘翅在背上展开；这时 x、feet 是身体中心
+    var walk: Double?          // 走路：步伐的相位（弧度），两条腿和两只手前后交替摆动；nil 为站着
 }
 
 /// 场景给玩家的道具
@@ -467,6 +469,9 @@ struct PlayerProps {
 }
 
 enum Player {
+    /// 局部画布里头部正面左边缘的位置（Player.draw 的 x 对应这里）
+    static let canvasX = 36
+
     /// 鞘翅滑翔（与原版一致）：身体放平，头在最前面、保持竖直往前看，腿拖在后面；
     /// 鞘翅从肩膀往后掠开——远处那片在身体上方，近处那片在身体下方，都往后收成尖，前缘颜色更深。x、y 是身体中心
     static func drawFlying(_ b: inout DotBuffer, look: PlayerLook, x: Int, y: Int, t: Double, facingRight: Bool) {
@@ -546,8 +551,9 @@ enum Player {
     static func draw(_ b: inout DotBuffer, look: PlayerLook, props: PlayerProps = PlayerProps(), pose: PlayerPose,
                      x: Int, feet: Int, t: Double, facingRight: Bool = false) {
         let look = look.wearing(props.armor)
-        var s = DotBuffer(cols: 52, rows: 64)
-        let ax = 20, f = 60 - pose.lift
+        // 先画到一张局部画布上：左边留够地方，长矛、钓竿这类往前伸的东西不会被截掉
+        var s = DotBuffer(cols: 84, rows: 64)
+        let ax = canvasX, f = 60 - pose.lift
         let breath = sin(t * 2 * .pi / 3.4) > 0.35 ? 1 : 0
         let legsH = pose.sitting ? 10 : 12
         // 潜行（和原版一样）：腿保持直立，上身往前倾，肩膀和头往前、往下移，头保持竖直，手臂跟着肩膀往前
@@ -568,8 +574,11 @@ enum Player {
         }
         // 后手：绕肩膀旋转，拿东西也用这只手
         let pivotX = Double(ax - reach) - 1.5, pivotY = Double(shoulder)
+        // 走路时手脚的摆幅：近处的腿往前时远处的腿往后，手和同侧的腿相反
+        let swing = pose.walk.map { sin($0) * 0.42 } ?? 0
+        let walking = pose.walk != nil && !pose.sitting
         if look.crossedArms == nil {
-            s.blitRotated(look.farArm, pivotX: pivotX, pivotY: pivotY, origin: (1.5, 0), angle: pose.armAngle)
+            s.blitRotated(look.farArm, pivotX: pivotX, pivotY: pivotY, origin: (1.5, 0), angle: pose.armAngle + (walking ? swing * 0.7 : 0))
         }
         if pose.sitting {
             // 坐着：大腿从髋部往前（画面左方）伸出去，小腿从膝盖垂下来，和身体连在一起
@@ -585,6 +594,17 @@ enum Player {
                     if v != 0 { s[ax - 5 + c - leg, hipY + 4 + r] = 0xFF00_0000 | shade(v & 0xFFFFFF, tone) }
                 } }
             }
+        } else if walking {
+            // 走路：两条腿各自绕髋部转动，远处那条（暗一点）先画
+            let legs = look.legs
+            func leg(_ cols: [Int]) -> Sprite {
+                Sprite(width: cols.count, height: legs.height) { x, y in let v = legs.px[y * legs.width + cols[x]]; return v == 0 ? nil : v & 0xFFFFFF }
+            }
+            let hip = Double(f - legs.height + 1)
+            // 右边那条腿连着侧面（第 8、9 列），左边那条只有正面
+            let far = leg([4, 5, 6, 7] + (legs.width > 8 ? Array(8..<legs.width) : [])), near = leg([0, 1, 2, 3])
+            s.blitRotated(far, pivotX: Double(ax + 6), pivotY: hip, origin: (2, 0), angle: -swing)
+            s.blitRotated(near, pivotX: Double(ax + 2), pivotY: hip, origin: (2, 0), angle: swing)
         } else {
             s.blit(look.legs, x: ax, bottom: f)
         }
@@ -601,6 +621,9 @@ enum Player {
         torso(look.bodySide, x: ax + 8)
         if let arms = look.crossedArms {
             s.blit(arms, x: ax - reach - 1, bottom: shoulder + 7)
+        } else if walking {
+            s.blitRotated(look.nearArm, pivotX: Double(ax + 10) + Double(look.nearArm.width) / 2, pivotY: Double(shoulder),
+                          origin: (Double(look.nearArm.width) / 2, 0), angle: -swing * 0.7)
         } else {
             torso(look.nearArm, x: ax + 10)
         }
@@ -931,9 +954,29 @@ enum DotScenes {
     /// 按游戏版本选场景：同一个大版本（以及它的快照、预发布）都用同一个场景
     static func scene(for version: String) -> DotScene {
         guard let (major, minor) = family(version) else { return Plains() }
+        // 1.21 之后每个小版本都是一次独立的更新
+        if (major, minor) == (1, 21) {
+            switch patch(version) {
+            case 4: return GardenAwakens()
+            case 5: return SpringToLife()
+            case 6...8: return ChaseTheSkies()
+            case 9...10: return CopperAge()
+            case 11...: return MountsOfMayhem()
+            default: return TrickyTrials()
+            }
+        }
         switch (major, minor) {
+        case (1, 0), (1, 1): return TheEnd()
+        case (1, 2): return JungleUpdate()
+        case (1, 3): return DesertTrade()
+        case (1, 4): return PrettyScary()
+        case (1, 5): return RedstoneUpdate()
+        case (1, 6): return HorseUpdate()
+        case (1, 7): return ChangedTheWorld()
         case (1, 8): return PvpArena()
         case (1, 9): return CombatUpdate()
+        case (1, 10): return Frostburn()
+        case (1, 11): return Exploration()
         case (1, 12): return WorldOfColor()
         case (1, 13): return UpdateAquatic()
         case (1, 14): return VillageAndPillage()
@@ -944,8 +987,10 @@ enum DotScenes {
         case (1, 19): return WildUpdate()
         case (1, 20): return TrailsAndTales()
         case (1, 21): return TrickyTrials()
+        case (26, 1): return TinyTakeover()
         case (26, 2): return SulfurCaves()
         case (26, 3): return WildernessBound()
+        case (26, 4): return IceCaves()
         default: return Plains()
         }
     }

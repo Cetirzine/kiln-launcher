@@ -892,10 +892,21 @@ extension DotScenes {
     /// 版本号的前两段：1.8.9 → (1, 8)，26.4-snapshot-3 → (26, 4)，1.21-pre1 → (1, 21)。
     /// 快照、预发布、候选版都用同一个正式版的场景；24w14a 这类周快照没有对应的版本号，用默认场景
     static func family(_ version: String) -> (Int, Int)? {
-        let head = version.split(separator: "-").first.map(String.init) ?? version
-        let parts = head.split(separator: ".").compactMap { Int($0) }
+        let parts = numbers(version)
         guard parts.count >= 2 else { return nil }
         return (parts[0], parts[1])
+    }
+
+    /// 版本号的第三段：1.21.4 → 4，1.21 → 0
+    static func patch(_ version: String) -> Int {
+        let parts = numbers(version)
+        return parts.count >= 3 ? parts[2] : 0
+    }
+
+    /// 开头那串数字和点：1.21.4-rc1 → [1, 21, 4]，1.14 Pre-Release 1 → [1, 14]；b1.7.3 这类远古版本不以数字开头，返回空
+    private static func numbers(_ version: String) -> [Int] {
+        let head = version.prefix { $0.isASCII && ($0.isNumber || $0 == ".") }
+        return head.split(separator: ".").compactMap { Int($0) }
     }
 }
 

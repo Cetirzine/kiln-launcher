@@ -25,7 +25,10 @@ package enum Skins {
 
     /// 导入皮肤文件，返回保存后的文件名（按内容命名，相同皮肤只保存一份）
     package static func importSkin(_ url: URL) throws -> String {
-        let data = try Data(contentsOf: url)
+        try importSkin(data: Data(contentsOf: url))
+    }
+
+    package static func importSkin(data: Data) throws -> String {
         try validate(data)
         let name = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined().prefix(16) + ".png"
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -56,6 +59,48 @@ package enum Skins {
         let slim = textures["textures"]["SKIN"]["metadata"]["model"].string == "slim"
         if slim { try? Data().write(to: meta) } else { try? FileManager.default.removeItem(at: meta) }
         return (png, slim)
+    }
+
+    // MARK: 皮肤库
+
+    /// 用过的皮肤：上传、导入或换下来的皮肤都留一份，之后一键换回去
+    package struct SavedSkin: Codable, Identifiable, Hashable, Sendable {
+        package var file: String
+        package var slim: Bool
+        package var label: String
+        package var added: Date
+        package var id: String { file }
+        package var url: URL { Skins.file(file) }
+    }
+
+    static var libraryFile: URL { folder.appendingPathComponent("library.json") }
+
+    /// 皮肤库，最近加入的在前
+    package static func library() -> [SavedSkin] {
+        guard let data = try? Data(contentsOf: libraryFile),
+              let list = try? JSONDecoder().decode([SavedSkin].self, from: data) else { return [] }
+        return list.filter { FileManager.default.fileExists(atPath: $0.url.path) }
+    }
+
+    private static func writeLibrary(_ list: [SavedSkin]) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try? JSONEncoder().encode(list).write(to: libraryFile, options: .atomic)
+    }
+
+    /// 存进皮肤库；同一张皮肤已经在库里时移到最前面，名称和模型以这次为准。最多留 60 张
+    @discardableResult
+    package static func addToLibrary(data: Data, slim: Bool, label: String) throws -> SavedSkin {
+        let file = try importSkin(data: data)
+        var list = library().filter { $0.file != file }
+        let entry = SavedSkin(file: file, slim: slim, label: label, added: Date())
+        list.insert(entry, at: 0)
+        writeLibrary(Array(list.prefix(60)))
+        return entry
+    }
+
+    /// 从皮肤库移除（图片文件留着，离线账号可能还在用）
+    package static func removeFromLibrary(_ skin: SavedSkin) {
+        writeLibrary(library().filter { $0.file != skin.file })
     }
 
     // MARK: 微软账号
