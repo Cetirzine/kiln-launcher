@@ -44,6 +44,14 @@ enum Snapshot {
             render("sheet-export", ModpackExportSheet(instance: pack).background(Theme.panel))
             render("sheet-rename", InstanceNameSheet(instance: pack, mode: .duplicate).background(Theme.panel))
         }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        render("sheet-import", ImportSheet(preview: [
+            LauncherImport.Candidate(source: .prism, name: "Fabulously Optimized", gameVersion: "1.21.1", loader: .init(kind: "Fabric", version: "0.16.5"),
+                                     contentDir: home.appendingPathComponent("Library/Application Support/PrismLauncher/instances/FO/.minecraft")),
+            LauncherImport.Candidate(source: .curseforge, name: "All the Mods 9", gameVersion: "1.20.1", loader: .init(kind: "Forge", version: "47.2.0"),
+                                     contentDir: home.appendingPathComponent("Documents/curseforge/minecraft/Instances/ATM9")),
+            LauncherImport.Candidate(source: .official, name: "生存", gameVersion: "1.21.4", loader: nil, contentDir: home.appendingPathComponent("Games/survival")),
+        ]).background(Theme.panel))
         state.manualDownloads = [Modpack.ManualFile(title: "ServerCore", fileName: "servercore-1.3.5-1.19.4.jar",
                                                      pageURL: "https://www.curseforge.com", destination: URL(fileURLWithPath: "/tmp/x"), sha1: nil)]
         render("sheet-manual", ManualDownloadsSheet().background(Theme.panel))

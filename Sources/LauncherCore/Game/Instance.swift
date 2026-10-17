@@ -224,6 +224,9 @@ package final class McInstance: Identifiable, Hashable {
 
     package var type: String { json["type"].string ?? "release" }
 
+    /// 支持 Quick Play（--quickPlaySingleplayer / --quickPlayMultiplayer）：23w14a（1.20 快照）及以后
+    package var supportsQuickPlay: Bool { releaseTime > ISO8601DateFormatter().date(from: "2023-04-04T00:00:00Z")! }
+
     /// 原版版本号
     package var vanillaVersion: String {
         if let c = raw["clientVersion"].string { return c }
@@ -337,6 +340,22 @@ package final class McInstance: Identifiable, Hashable {
     }
 
     package var setup: LauncherSettings.InstanceSetup { LauncherSettings.shared.instanceSetup(dir) }
+
+    /// 游戏时长的文字：“3 小时 20 分钟”；compact 时为“3.3 小时”。从未玩过时为 nil
+    package static func formatPlayTime(_ seconds: Double?, compact: Bool = false) -> String? {
+        guard let seconds, seconds >= 1 else { return nil }
+        let minutes = Int(seconds / 60)
+        if minutes < 1 { return T("不到 1 分钟", "< 1 min") }
+        if minutes < 60 { return T("\(minutes) 分钟", "\(minutes) min") }
+        let hours = Double(minutes) / 60
+        if compact {
+            let h = hours < 100 ? String(format: "%.1f", hours) : String(Int(hours))
+            return T("\(h) 小时", "\(h) h")
+        }
+        let h = minutes / 60, m = minutes % 60
+        if m == 0 { return T("\(h) 小时", "\(h) h") }
+        return T("\(h) 小时 \(m) 分钟", "\(h) h \(m) min")
+    }
 
     /// 是否开启版本隔离
     package var isolated: Bool {

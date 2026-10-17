@@ -33,6 +33,7 @@ struct KilnApp: App {
                 Button(T("版本", "Instances")) { state.subPage = nil; state.page = .instances }
                     .keyboardShortcut("i", modifiers: .command)
                 Button(T("安装整合包…", "Install Modpack…")) { ModpackActions.chooseFile() }
+                Button(T("从其他启动器导入…", "Import from Other Launchers…")) { state.showImport = true }
                 Button(T("打开游戏文件夹", "Open game folder")) { NSWorkspace.shared.open(LauncherSettings.shared.minecraftURL) }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
                 Divider()
@@ -48,10 +49,13 @@ struct KilnApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("[Start] \(AppInfo.shortName) \(AppInfo.version)，macOS \(RuleContext.osVersion)，\(Arch.native)，内存 \(ProcessInfo.processInfo.physicalMemory / 1024 / 1024 / 1024) GB")
         NSWindow.allowsAutomaticWindowTabbing = false
+        // 快捷指令中的版本列表
+        KilnShortcuts.updateAppShortcutParameters()
         // 启动后在后台检查更新
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -60,6 +64,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// kiln:// 启动链接（桌面快捷方式、快捷指令）
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { LaunchLinks.handle(url) }
+    }
+
+    /// Dock 菜单：最近玩过的版本
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        do {
+            let menu = NSMenu()
+            let state = AppState.shared
+            for instance in state.recentInstances.prefix(5) {
+                let item = ClosureMenuItem(instance.name) { state.launch(named: instance.name) }
+                item.toolTip = instance.description
+                menu.addItem(item)
+            }
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            menu.addItem(ClosureMenuItem(T("版本", "Instances")) {
+                NSApp.activate(ignoringOtherApps: true)
+                state.subPage = nil
+                state.page = .instances
+            })
+            return menu
+        }
+    }
 }
 
 enum Links {
@@ -122,6 +151,8 @@ final class AppState {
 
     // MARK: 整合包
 
+    /// 显示“从其他启动器导入”窗口
+    var showImport = false
     /// 待安装的整合包（显示安装窗口）
     var modpackInstall: ModpackSource?
     /// 整合包中需要手动下载的文件
@@ -202,6 +233,30 @@ final class AppState {
         LauncherSettings.shared.selectedInstance = instance.name
     }
 
+    /// 最近玩过的版本（按上次游玩时间）
+    var recentInstances: [McInstance] {
+        let list = instances.isEmpty ? InstanceScanner.scan(LauncherSettings.shared.minecraftURL) : instances
+        return list.filter { $0.category != .error && $0.setup.lastPlayed != nil }
+            .sorted { ($0.setup.lastPlayed ?? .distantPast) > ($1.setup.lastPlayed ?? .distantPast) }
+    }
+
+    /// 按名称启动版本（启动链接、快捷指令、Dock 菜单）；名称为空时启动当前版本
+    func launch(named name: String?, options: LaunchOptions = LaunchOptions()) {
+        if let name {
+            if instances.isEmpty { instances = InstanceScanner.scan(LauncherSettings.shared.minecraftURL) }
+            guard let instance = instances.first(where: { $0.name == name }) ?? instances.first(where: { $0.name.lowercased() == name.lowercased() }) else {
+                Hint.show(T("找不到版本 \(name)", "Couldn't find the instance \(name)"), .red)
+                subPage = nil
+                page = .instances
+                return
+            }
+            select(instance)
+        }
+        subPage = nil
+        page = .home
+        launchSelected(options: options)
+    }
+
     var isLaunching: Bool { launchJob?.state == .running }
 
     func launchSelected(options: LaunchOptions = LaunchOptions()) {
@@ -219,6 +274,7 @@ final class AppState {
             showAccounts = true
             return
         }
+        Notifier.requestIfNeeded()
         let callbacks = LaunchCallbacks(onWindow: { _ in Self.onGameWindow() }, onExit: { Self.onGameExit($0, instance: instance) })
         launchJob = JobCenter.shared.start(T("启动 \(instance.name)", "Launch \(instance.name)"), silent: true) { job in
             do {
@@ -339,6 +395,9 @@ final class AppState {
         }
         guard game.state == .crashed else { return }
         let finding = CrashAnalyzer.analyze(game.lines, gameDir: instance.gameDir)
+        Notifier.post(T("\(instance.name) 崩溃了", "\(instance.name) crashed"),
+                      finding?.reason ?? T("游戏异常退出（返回值 \(game.exitCode ?? -1)）", "The game exited unexpectedly (exit code \(game.exitCode ?? -1))"),
+                      action: "log")
         var content = T("游戏异常退出（返回值 \(game.exitCode ?? -1)）。", "The game exited unexpectedly (exit code \(game.exitCode ?? -1)).")
         if let f = finding {
             content += "\n\n" + T("可能原因：", "Likely cause: ") + f.reason
@@ -346,8 +405,9 @@ final class AppState {
         }
         Task { @MainActor in
             let r = await MsgBox.show(title: T("游戏崩溃", "Game crashed"), content: content,
-                                      buttons: [T("查看日志", "View log"), T("好", "OK")], warn: true)
+                                      buttons: [T("查看日志", "View log"), T("导出诊断包…", "Export diagnostics…"), T("好", "OK")], warn: true)
             if r == 1 { AppState.shared.showLog = game }
+            if r == 2 { InstanceActions.exportDiagnostics(instance, game: game) }
         }
     }
 }
@@ -366,12 +426,17 @@ final class JobCenter {
     func start(_ title: String, silent: Bool = false, _ body: @escaping @MainActor (Job) async throws -> Void) -> Job {
         let job = Job(title: title)
         jobs.insert(job, at: 0)
+        DockProgress.shared.start()
+        if !silent { Notifier.requestIfNeeded() }
         job.task = Task { @MainActor in
             do {
                 try await body(job)
                 job.state = .success
                 job.stage = T("完成", "Done")
-                if !silent { Hint.show(T("\(title) 已完成", "\(title) finished"), .green) }
+                if !silent {
+                    Hint.show(T("\(title) 已完成", "\(title) finished"), .green)
+                    Notifier.post(T("已完成", "Finished"), title, action: "tasks")
+                }
             } catch {
                 if error is CancellationError || Task.isCancelled {
                     job.state = .cancelled
@@ -381,7 +446,10 @@ final class JobCenter {
                     job.error = error.friendly
                     job.stage = T("失败", "Failed")
                     log("[Job] \(title) 失败：\(error.friendly)")
-                    if !silent { Hint.show(T("\(title) 失败：\(error.friendly)", "\(title) failed: \(error.friendly)"), .red) }
+                    if !silent {
+                        Hint.show(T("\(title) 失败：\(error.friendly)", "\(title) failed: \(error.friendly)"), .red)
+                        Notifier.post(T("\(title) 失败", "\(title) failed"), error.friendly, action: "tasks")
+                    }
                 }
             }
         }

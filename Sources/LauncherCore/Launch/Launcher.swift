@@ -12,8 +12,16 @@ package final class GameProcess: Identifiable {
     package var lines: [String] = []
     package var state: State = .starting
     package var exitCode: Int32?
+    package let startedAt = Date()
+    package var endedAt: Date?
     @ObservationIgnored package var process: Process?
     @ObservationIgnored package var logFile: URL?
+    /// 启动时的 Java 与参数（令牌已隐藏），用于导出诊断包
+    @ObservationIgnored package var instance: McInstance?
+    @ObservationIgnored package var java: JavaInfo?
+    @ObservationIgnored package var commandLine: String?
+    /// 登录令牌，只保存在内存中，导出诊断包时用于隐藏
+    @ObservationIgnored package var secret: String?
     @ObservationIgnored private let parser = Log4jParser()
 
     package init(instanceName: String) { self.instanceName = instanceName }
@@ -28,11 +36,13 @@ package final class GameProcess: Identifiable {
 
 package struct LaunchOptions {
     package var serverIp: String?
+    /// 直接进入的单人存档（saves 下的文件夹名，1.20 及以上）
+    package var world: String?
     package var demo = false
     /// 仅导出启动脚本
     package var exportScript: URL?
-    package init(serverIp: String? = nil, demo: Bool = false, exportScript: URL? = nil) {
-        self.serverIp = serverIp; self.demo = demo; self.exportScript = exportScript
+    package init(serverIp: String? = nil, world: String? = nil, demo: Bool = false, exportScript: URL? = nil) {
+        self.serverIp = serverIp; self.world = world; self.demo = demo; self.exportScript = exportScript
     }
 }
 
@@ -83,7 +93,22 @@ package enum Launcher {
         var setup = instance.setup
         setup.lastPlayed = Date()
         LauncherSettings.shared.saveInstanceSetup(setup, instance.dir)
-        return try run(instance, java: java, args: args, login: login, callbacks: callbacks)
+        let game = try run(instance, java: java, args: args, login: login, callbacks: callbacks)
+        game.instance = instance
+        game.java = java
+        game.commandLine = redact(args.joined(separator: " "), login)
+        if login.userType != "legacy" { game.secret = login.accessToken }
+        return game
+    }
+
+    /// 累计游戏时长（秒）
+    @MainActor
+    static func addPlayTime(_ game: GameProcess, instance: McInstance) {
+        let seconds = (game.endedAt ?? Date()).timeIntervalSince(game.startedAt)
+        guard seconds > 0, FileManager.default.fileExists(atPath: instance.dir.path) else { return }
+        var setup = instance.setup
+        setup.playTime = (setup.playTime ?? 0) + seconds
+        LauncherSettings.shared.saveInstanceSetup(setup, instance.dir)
     }
 
     static func precheck(_ instance: McInstance, account: Account) throws {
@@ -270,9 +295,12 @@ package enum Launcher {
         }
         if s.windowMode == .fullscreen { game.append("--fullscreen") }
         if options.demo && !game.contains("--demo") { game.append("--demo") }
-        let server = options.serverIp ?? setup.serverEnter ?? ""
+        let server = options.world != nil ? "" : options.serverIp ?? setup.serverEnter ?? ""
+        if let world = options.world, instance.supportsQuickPlay {
+            game += ["--quickPlaySingleplayer", world]
+        }
         if !server.isEmpty {
-            if instance.releaseTime > ISO8601DateFormatter().date(from: "2023-04-04T00:00:00Z")! {
+            if instance.supportsQuickPlay {
                 game += ["--quickPlayMultiplayer", server]
             } else {
                 let parts = server.split(separator: ":")
@@ -396,8 +424,10 @@ package enum Launcher {
             let killed = proc.terminationReason == .uncaughtSignal && (code == 15 || code == 9)
             Task { @MainActor in
                 game.exitCode = code
+                game.endedAt = Date()
                 game.state = code == 0 || killed ? .exited : .crashed
                 log("[Launch] 游戏已退出，返回值 \(code)")
+                addPlayTime(game, instance: instance)
                 callbacks.onExit(game)
             }
         }

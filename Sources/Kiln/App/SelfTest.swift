@@ -113,6 +113,90 @@ enum SelfTest {
                                           ("1.21.11-rc1", "1.21.11"), ("26.1.2", "26.1"), ("26.4-snapshot-3", "26.4"), ("b1.7.3", "plains"), ("24w14a", "plains")]
         let wrong = scenes.filter { DotScenes.scene(for: $0.0).id != $0.1 }
         expect(wrong.isEmpty, "主页场景按版本选择" + (wrong.isEmpty ? "" : "：\(wrong.map { "\($0.0) → \(DotScenes.scene(for: $0.0).id)" })"))
+        // 0.2.9：崩溃规则
+        expect(CrashAnalyzer.analyze(["java.lang.Throwable: Manually triggered debug crash"])?.reason.contains("F3") == true, "崩溃分析：手动触发的调试崩溃")
+        let mcRange = CrashAnalyzer.analyze(["Missing or unsupported mandatory dependencies:",
+                                             "\tMod ID: 'minecraft', Requested by: 'create', Expected range: '[1.20.1,1.20.2)', Actual version: '1.20.4'"])
+        expect(mcRange?.detail == "create" && mcRange?.reason.contains("Minecraft") == true, "崩溃分析：Forge Mod 与 Minecraft 版本不匹配")
+        let fabricMc = CrashAnalyzer.analyze(["Incompatible mods found!", " - Mod 'Sodium' (sodium) 0.5.3 requires version 1.20.1 of 'Minecraft' (minecraft), but only the wrong version is present: 1.20.4!"])
+        expect(fabricMc?.detail == "Sodium" && fabricMc?.reason.contains("Minecraft") == true, "崩溃分析：Fabric Mod 与 Minecraft 版本不匹配")
+        let fabricJava = CrashAnalyzer.analyze([" - Mod 'Foo' (foo) 1.0 requires version 21 or later of 'OpenJDK 64-Bit Server VM' (java), but only the wrong version is present: 17!"])
+        expect(fabricJava?.detail == "Foo" && fabricJava?.reason.contains("Java") == true, "崩溃分析：Mod 需要更新的 Java")
+        expect(CrashAnalyzer.analyze(["java.lang.ClassCastException: class jdk.internal.loader.ClassLoaders$AppClassLoader cannot be cast to class java.net.URLClassLoader"])?.reason.contains("Java 8") == true,
+               "崩溃分析：旧版 Forge 只能用 Java 8")
+        let jvm = CrashAnalyzer.analyze(["# A fatal error has been detected by the Java Runtime Environment:", "# Problematic frame:", "# C  [liblwjgl.dylib+0x1234]  foo"])
+        expect(jvm?.detail == "C  [liblwjgl.dylib+0x1234]  foo", "崩溃分析：JVM 崩溃，提取出错位置")
+        // 诊断包：隐藏令牌与用户目录
+        let scrubbed = Diagnostics.scrub("--accessToken abc.def --username X \(NSHomeDirectory())/mc eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4eHh4eHgifQ.c2lnbmF0dXJl secret-token-123",
+                                         secret: "secret-token-123")
+        expect(!scrubbed.contains("abc.def") && !scrubbed.contains("eyJhbGci") && !scrubbed.contains("secret-token-123")
+               && scrubbed.contains("~/mc") && scrubbed.contains("--username X"), "诊断包：隐藏令牌与用户目录")
+        // 游戏时长
+        let en = Localizer.shared.language
+        Localizer.shared.language = .zhHans
+        expect(McInstance.formatPlayTime(nil) == nil && McInstance.formatPlayTime(30) == "不到 1 分钟" && McInstance.formatPlayTime(25 * 60) == "25 分钟"
+               && McInstance.formatPlayTime(3 * 3600 + 20 * 60) == "3 小时 20 分钟" && McInstance.formatPlayTime(3 * 3600 + 20 * 60, compact: true) == "3.3 小时",
+               "游戏时长的文字")
+        Localizer.shared.language = en
+        // 启动链接
+        let link = LaunchLinks.url(for: "1.21.1 Fabric 测试", world: "新的世界")
+        let parsed = LaunchLinks.parse(link)
+        expect(link.absoluteString.hasPrefix("kiln://launch/") && parsed?.name == "1.21.1 Fabric 测试" && parsed?.options.world == "新的世界",
+               "启动链接：生成与解析（空格、中文）")
+        expect(LaunchLinks.parse(URL(string: "kiln://launch?server=mc.example.com:25565")!).map { $0.name == nil && $0.options.serverIp == "mc.example.com:25565" } == true
+               && LaunchLinks.parse(URL(string: "https://example.com")!) == nil, "启动链接：服务器参数、拒绝其他链接")
+        // 从其他启动器导入
+        do {
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("kiln-import-\(UUID().uuidString)")
+            let prism = root.appendingPathComponent("prism/My Pack")
+            try fm.createDirectory(at: prism.appendingPathComponent(".minecraft/mods"), withIntermediateDirectories: true)
+            try fm.createDirectory(at: prism.appendingPathComponent(".minecraft/saves/World"), withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: prism.appendingPathComponent(".minecraft/mods/sodium.jar"))
+            try "[General]\nname=\"My Pack\"\nOverrideMemory=true\nMaxMemAlloc=6144\nOverrideJavaArgs=true\nJvmArgs=-Dfoo=1\nlastLaunchTime=1700000000000\n"
+                .write(to: prism.appendingPathComponent("instance.cfg"), atomically: true, encoding: .utf8)
+            try #"{"components":[{"uid":"org.lwjgl3","version":"3.3.3"},{"uid":"net.minecraft","version":"1.21.1"},{"uid":"net.fabricmc.fabric-loader","version":"0.16.5"}],"formatVersion":1}"#
+                .write(to: prism.appendingPathComponent("mmc-pack.json"), atomically: true, encoding: .utf8)
+            let p = LauncherImport.inspect(folder: prism)
+            expect(p?.name == "My Pack" && p?.gameVersion == "1.21.1" && p?.loader == LauncherImport.Loader(kind: "Fabric", version: "0.16.5")
+                   && p?.memoryGB == 6 && p?.jvmArgs == "-Dfoo=1" && p?.modCount == 1 && p?.worldCount == 1
+                   && p?.contentDir.lastPathComponent == ".minecraft" && p?.lastPlayed == Date(timeIntervalSince1970: 1_700_000_000),
+                   "导入：Prism 实例（instance.cfg + mmc-pack.json）")
+            let cf = root.appendingPathComponent("curseforge/All the Mods")
+            try fm.createDirectory(at: cf.appendingPathComponent("mods"), withIntermediateDirectories: true)
+            try #"{"name":"All the Mods","gameVersion":"1.20.1","baseModLoader":{"name":"forge-47.2.0","forgeVersion":"47.2.0","minecraftVersion":"1.20.1"},"allocatedMemory":8192,"lastPlayed":"2024-05-01T10:00:00.123Z"}"#
+                .write(to: cf.appendingPathComponent("minecraftinstance.json"), atomically: true, encoding: .utf8)
+            let c = LauncherImport.inspect(folder: cf)
+            expect(c?.source == .curseforge && c?.gameVersion == "1.20.1" && c?.loader == LauncherImport.Loader(kind: "Forge", version: "47.2.0")
+                   && c?.memoryGB == 8 && c?.lastPlayed != nil && c?.contentDir == cf, "导入：CurseForge 实例（minecraftinstance.json）")
+            let fabricCf = try JSON(data: Data(#"{"name":"F","gameVersion":"1.20.1","baseModLoader":{"name":"fabric-0.15.7-1.20.1"}}"#.utf8))
+            try fabricCf.data().write(to: cf.appendingPathComponent("minecraftinstance.json"))
+            expect(LauncherImport.inspect(folder: cf)?.loader == LauncherImport.Loader(kind: "Fabric", version: "0.15.7"), "导入：CurseForge 的 Fabric 加载器名称")
+            // 官方启动器：只导入使用独立游戏目录的配置
+            let official = root.appendingPathComponent("minecraft")
+            let ver = official.appendingPathComponent("versions/fabric-loader-0.16.5-1.21.1")
+            try fm.createDirectory(at: ver, withIntermediateDirectories: true)
+            try #"{"id":"fabric-loader-0.16.5-1.21.1","inheritsFrom":"1.21.1","libraries":[{"name":"net.fabricmc:fabric-loader:0.16.5"}]}"#
+                .write(to: ver.appendingPathComponent("fabric-loader-0.16.5-1.21.1.json"), atomically: true, encoding: .utf8)
+            let customDir = root.appendingPathComponent("profile-dir")
+            try fm.createDirectory(at: customDir, withIntermediateDirectories: true)
+            let profiles = #"{"profiles":{"a":{"name":"Fabric 生存","lastVersionId":"fabric-loader-0.16.5-1.21.1","gameDir":"\#(customDir.path)","javaArgs":"-Xmx4G -XX:+UseG1GC -Dbar=2"},"b":{"name":"","lastVersionId":"latest-release","type":"latest-release"},"c":{"name":"默认","lastVersionId":"fabric-loader-0.16.5-1.21.1"}}}"#
+            try profiles.write(to: official.appendingPathComponent("launcher_profiles.json"), atomically: true, encoding: .utf8)
+            let o = LauncherImport.officialProfiles(official)
+            expect(o.count == 1 && o.first?.name == "Fabric 生存" && o.first?.gameVersion == "1.21.1" && o.first?.loader?.kind == "Fabric"
+                   && o.first?.memoryGB == 4 && o.first?.jvmArgs == "-Dbar=2", "导入：官方启动器配置（独立游戏目录、内存与参数）")
+            // 复制内容：跳过游戏文件与日志，保留 Mod、存档
+            let dst = root.appendingPathComponent("dst/X")
+            try fm.createDirectory(at: dst.appendingPathComponent(".kiln"), withIntermediateDirectories: true)
+            try fm.createDirectory(at: prism.appendingPathComponent(".minecraft/logs"), withIntermediateDirectories: true)
+            try fm.createDirectory(at: prism.appendingPathComponent(".minecraft/versions"), withIntermediateDirectories: true)
+            try LauncherImport.copyContent(from: prism.appendingPathComponent(".minecraft"), to: dst)
+            expect(fm.fileExists(atPath: dst.appendingPathComponent("mods/sodium.jar").path) && fm.fileExists(atPath: dst.appendingPathComponent("saves/World").path)
+                   && !fm.fileExists(atPath: dst.appendingPathComponent("logs").path) && !fm.fileExists(atPath: dst.appendingPathComponent("versions").path)
+                   && fm.fileExists(atPath: dst.appendingPathComponent(".kiln").path), "导入：复制 Mod 与存档，跳过日志与游戏文件")
+            expect(LauncherImport.availableName("a/b:c", folder: root) == "a-b-c", "导入：名称中的非法字符")
+            try? fm.removeItem(at: root)
+        } catch { expect(false, "导入：\(error.friendly)") }
         print(failures == 0 ? "全部通过" : "\(failures) 项失败")
         return failures == 0
     }
@@ -133,7 +217,9 @@ enum SelfTest {
                 }
                 LauncherSettings.shared.minecraftFolder = folder.path
                 let isPack = loader?.hasPrefix("pack=") == true
-                let name = isPack ? "\(version)-modpack-test" : "\(version)-\(loader?.lowercased() ?? "vanilla")-test"
+                // KILN_TEST_INSTANCE=<版本名>：直接启动已有的版本
+                let name = ProcessInfo.processInfo.environment["KILN_TEST_INSTANCE"]
+                    ?? (isPack ? "\(version)-modpack-test" : "\(version)-\(loader?.lowercased() ?? "vanilla")-test")
                 let instanceDir = folder.appendingPathComponent("versions/\(name)")
                 if !FileManager.default.fileExists(atPath: instanceDir.appendingPathComponent("\(name).json").path) {
                     try? FileManager.default.removeItem(at: instanceDir)
@@ -208,7 +294,10 @@ enum SelfTest {
                     login = try await AccountStore.shared.login(acc)
                     print("离线皮肤：\(login.jvmArgs.first ?? "未启用")")
                 }
-                let args = try Launcher.buildArguments(instance, java: java, login: login, libs: libs, ctx: ctx, options: LaunchOptions())
+                // KILN_TEST_WORLD=<存档名>：测试直接进入存档（Quick Play）
+                let testWorld = ProcessInfo.processInfo.environment["KILN_TEST_WORLD"]
+                let args = try Launcher.buildArguments(instance, java: java, login: login, libs: libs, ctx: ctx, options: LaunchOptions(world: testWorld))
+                if let w = testWorld { print("Quick Play：\(args.contains("--quickPlaySingleplayer") ? "--quickPlaySingleplayer \(w)" : "不支持")") }
                 print("JVM 性能参数：\(args.filter { $0.hasPrefix("-XX:") || $0.hasPrefix("-Xm") || $0.hasPrefix("--sun") }.joined(separator: " "))")
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: java.path)
@@ -230,6 +319,11 @@ enum SelfTest {
                     let text = String(decoding: data, as: UTF8.self)
                     output += parser.feed(text)
                     let joined = output.suffix(80).joined(separator: "\n")
+                    if testWorld != nil {
+                        // 进入存档：等待玩家加入内置服务器
+                        if joined.contains("logged in with entity id") { ok = true; break }
+                        continue
+                    }
                     if joined.contains("Sound engine started") || joined.contains("OpenAL initialized") || joined.contains("Initializing LWJGL OpenAL") || joined.contains("Created: ") {
                         ok = true
                         // 皮肤测试：多等几秒，让游戏查询档案与材质
@@ -578,6 +672,53 @@ enum ProfileCheck {
                 let free = try await MinecraftServices.nameStatus("Kiln_" + String(UUID().uuidString.prefix(8)).replacingOccurrences(of: "-", with: ""), token: t)
                 expect(free == .available, "随机新名称可用（\(free)）")
             } catch { expect(false, error.friendly) }
+        }
+        while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        return ok
+    }
+}
+
+/// `--import-test <实例文件夹> <游戏目录>`：从其他启动器的实例导入为新版本（会下载游戏与加载器）
+enum ImportCheck {
+    nonisolated static func run(source: URL, folder: URL) -> Bool {
+        let sem = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var ok = false
+        Task { @MainActor in
+            defer { sem.signal() }
+            guard let c = LauncherImport.inspect(folder: source) else { print("✘ 无法识别实例：\(source.path)"); return }
+            print("识别：\(c.source.rawValue) · \(c.name) · \(c.summary) · \(c.modCount) 个 Mod · \(c.worldCount) 个存档 · 内存 \(c.memoryGB.map { "\($0) GB" } ?? "默认")")
+            do {
+                let name = LauncherImport.availableName(c.name, folder: folder)
+                let t0 = Date()
+                try await LauncherImport.run(c, name: name, folder: folder, job: Job(title: "import"))
+                let instance = McInstance(folder: folder, name: name)
+                let worlds = InstanceManager.worlds(instance).map(\.name)
+                print(String(format: "导入为 %@（%@），用时 %.1f 秒；存档：%@；独立目录：%@；内存：%@", name, instance.description, Date().timeIntervalSince(t0),
+                             worlds.joined(separator: ", "), instance.isolated ? "是" : "否", instance.setup.memoryGB.map { "\($0) GB" } ?? "默认"))
+                ok = instance.error == nil && instance.loaders.contains(c.loader?.kind ?? "") == (c.loader != nil) && worlds.count == c.worldCount
+                    && instance.setup.importedFrom == c.contentDir.path
+                print(ok ? "✔ 导入成功" : "✘ 导入结果不符")
+            } catch { print("✘ \(error.friendly)") }
+        }
+        while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        return ok
+    }
+}
+
+/// `--diagnostics-check <游戏目录> <版本名> <输出.zip>`：导出诊断包
+enum DiagnosticsCheck {
+    nonisolated static func run(folder: URL, name: String, output: URL) -> Bool {
+        let sem = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var ok = false
+        Task { @MainActor in
+            defer { sem.signal() }
+            do {
+                try await Diagnostics.export(instance: McInstance(folder: folder, name: name), game: nil, to: output)
+                let files = Zip.list(output)
+                print(files.joined(separator: "\n"))
+                ok = files.contains { $0.hasSuffix("info.txt") } && files.contains { $0.hasSuffix("launcher.log") }
+                print(ok ? "✔ 已导出" : "✘ 缺少文件")
+            } catch { print("✘ \(error.friendly)") }
         }
         while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
         return ok

@@ -83,18 +83,7 @@ package enum Modpack {
         defer { if !finished { try? fm.removeItem(at: dir) } }
 
         // 1. 游戏与加载器
-        let game = try await VersionManifest.find(info.gameVersion)
-        switch info.loader?.kind {
-        case "Fabric"?, "Quilt"?:
-            let kind = ModLoaderKind(rawValue: info.loader!.kind)!
-            try await Installer.install(version: game, name: name, loader: (kind, info.loader!.version), folder: folder, job: job)
-        case "Forge"?, "NeoForge"?:
-            let kind = ForgeKind(rawValue: info.loader!.kind)!
-            let maven = try await mavenVersion(kind, info.loader!.version, game: info.gameVersion)
-            try await ForgeInstaller.install(kind, version: maven, game: game, name: name, folder: folder, job: job)
-        default:
-            try await Installer.install(version: game, name: name, loader: nil, folder: folder, job: job)
-        }
+        try await installGame(info.gameVersion, loader: info.loader, name: name, folder: folder, job: job)
         let instance = McInstance(folder: folder, name: name)
         // 整合包总是使用独立的游戏目录
         var setup = instance.setup
@@ -203,6 +192,22 @@ package enum Modpack {
                 if (try? fm.moveItem(at: src, to: m.destination)) != nil { return false }
             }
             return true
+        }
+    }
+
+    /// 安装游戏与加载器（Fabric / Quilt / Forge / NeoForge）为新版本
+    package static func installGame(_ gameVersion: String, loader: (kind: String, version: String)?, name: String, folder: URL, job: Job) async throws {
+        let game = try await VersionManifest.find(gameVersion)
+        switch loader?.kind {
+        case "Fabric"?, "Quilt"?:
+            let kind = ModLoaderKind(rawValue: loader!.kind)!
+            try await Installer.install(version: game, name: name, loader: (kind, loader!.version), folder: folder, job: job)
+        case "Forge"?, "NeoForge"?:
+            let kind = ForgeKind(rawValue: loader!.kind)!
+            let maven = try await mavenVersion(kind, loader!.version, game: gameVersion)
+            try await ForgeInstaller.install(kind, version: maven, game: game, name: name, folder: folder, job: job)
+        default:
+            try await Installer.install(version: game, name: name, loader: nil, folder: folder, job: job)
         }
     }
 

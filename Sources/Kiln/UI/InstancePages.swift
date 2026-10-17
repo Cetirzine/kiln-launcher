@@ -13,6 +13,9 @@ struct InstancesPage: View {
         VStack(spacing: 0) {
             PageHeader(T("版本", "Instances"), subtitle: settings.minecraftFolder) {
                 folderMenu
+                Button(T("导入…", "Import…")) { state.showImport = true }
+                    .buttonStyle(.kiln)
+                    .help(T("从 Prism、MultiMC、CurseForge 或官方启动器导入", "Import from Prism, MultiMC, CurseForge or the official launcher"))
                 Button(T("安装新版本", "Install a version")) { state.page = .download; state.downloadSection = .game }
                     .buttonStyle(.kiln)
                 IconButton(systemImage: "folder", help: T("在访达中显示", "Show in Finder")) { NSWorkspace.shared.open(settings.minecraftURL) }
@@ -48,6 +51,7 @@ struct InstancesPage: View {
             Text(T("名称", "Name")).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 42)
             Text(T("运行方式", "Runs as")).frame(width: 150, alignment: .leading)
             Text(T("上次游玩", "Last played")).frame(width: 110, alignment: .leading)
+            Text(T("游戏时长", "Play time")).frame(width: 80, alignment: .leading)
             Color.clear.frame(width: 80, height: 1)
         }
         .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
@@ -61,7 +65,10 @@ struct InstancesPage: View {
                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
             Text(T("安装一个版本，或者在上方切换到已有的 Minecraft 文件夹。", "Install a version, or switch to an existing Minecraft folder above."))
                 .font(.system(size: 13)).foregroundStyle(Theme.text2)
-            Button(T("安装新版本", "Install a version")) { state.page = .download; state.downloadSection = .game }.buttonStyle(.kilnPrimary)
+            HStack(spacing: 8) {
+                Button(T("安装新版本", "Install a version")) { state.page = .download; state.downloadSection = .game }.buttonStyle(.kilnPrimary)
+                Button(T("从其他启动器导入…", "Import from other launchers…")) { state.showImport = true }.buttonStyle(.kiln)
+            }
         }
         .padding(28)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -154,6 +161,8 @@ struct InstanceRow: View {
             .font(.system(size: 12))
             .frame(width: 150, alignment: .leading)
             Text(lastPlayed).font(.system(size: 12)).foregroundStyle(Theme.text2).frame(width: 110, alignment: .leading)
+            Text(McInstance.formatPlayTime(instance.setup.playTime, compact: true) ?? "—")
+                .font(.system(size: 12)).foregroundStyle(Theme.text2).frame(width: 80, alignment: .leading)
             HStack(spacing: 4) {
                 if hover && instance.category != .error {
                     Button(T("开始", "Play")) { state.select(instance); state.launchSelected() }.buttonStyle(.kilnPrimary)
@@ -178,6 +187,9 @@ struct InstanceRow: View {
             Button(T("复制…", "Duplicate…")) { nameSheet = .duplicate }
             Button(T("导出整合包…", "Export modpack…")) { exporting = true }
             Button(T("在访达中显示", "Show in Finder")) { NSWorkspace.shared.open(instance.dir) }
+            Divider()
+            Button(T("创建桌面快捷方式", "Create desktop shortcut")) { LaunchLinks.createDesktopShortcut(instance) }
+            Button(T("复制启动链接", "Copy launch link")) { LaunchLinks.copyLink(instance) }
             Divider()
             Button(T("删除…", "Delete…"), role: .destructive) { InstanceActions.delete(instance) }
         }
@@ -215,6 +227,22 @@ struct InstanceRow: View {
 }
 
 enum InstanceActions {
+    /// 导出诊断包（日志、崩溃报告、Mod 列表与系统信息），完成后在访达中显示
+    @MainActor static func exportDiagnostics(_ instance: McInstance, game: GameProcess?) {
+        let panel = NSSavePanel()
+        let f = DateFormatter()
+        f.dateFormat = "yyyyMMdd-HHmm"
+        panel.nameFieldStringValue = "\(AppInfo.shortName)-" + T("诊断", "diagnostics") + "-\(instance.name)-\(f.string(from: Date())).zip"
+        panel.allowedContentTypes = [.zip]
+        panel.message = T("诊断包包含日志、崩溃报告、Mod 列表与系统信息；登录令牌已隐藏。", "The bundle has logs, crash reports, the mod list and system info. Sign-in tokens are hidden.")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        JobCenter.shared.start(T("导出诊断包", "Export diagnostics"), silent: true) { _ in
+            try await Diagnostics.export(instance: instance, game: game, to: url)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            Hint.show(T("诊断包已导出", "Diagnostics exported"), .green)
+        }
+    }
+
     @MainActor
     static func delete(_ instance: McInstance) {
         Task { @MainActor in
@@ -304,6 +332,9 @@ struct InstanceOverview: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(instance.name).font(.system(size: 17, weight: .bold)).foregroundStyle(Theme.text)
                         Text(instance.description).font(.system(size: 12)).foregroundStyle(Theme.text2)
+                        if let played = McInstance.formatPlayTime(instance.setup.playTime) {
+                            Text(T("已玩 \(played)", "Played for \(played)")).font(.system(size: 12)).foregroundStyle(Theme.text2)
+                        }
                         HStack(spacing: 6) {
                             Badge(text: "Java \(instance.javaMajor)+")
                             if Arch.isAppleSilicon {
@@ -351,6 +382,11 @@ struct InstanceOverview: View {
                     }.buttonStyle(.kiln)
                     Spacer()
                     Button(T("删除", "Delete")) { InstanceActions.delete(instance) }.buttonStyle(.kilnDanger)
+                }
+                HStack(spacing: 8) {
+                    Button(T("导出诊断包…", "Export diagnostics…")) { InstanceActions.exportDiagnostics(instance, game: nil) }.buttonStyle(.kiln)
+                    Button(T("创建桌面快捷方式", "Create desktop shortcut")) { LaunchLinks.createDesktopShortcut(instance) }.buttonStyle(.kiln)
+                    Button(T("复制启动链接", "Copy launch link")) { LaunchLinks.copyLink(instance) }.buttonStyle(.kiln)
                 }
             }
         }
@@ -670,6 +706,9 @@ struct GameLogPage: View {
                 }
                 if let f = game.logFile {
                     IconButton(systemImage: "doc.text.magnifyingglass", help: T("打开日志文件", "Open log file")) { NSWorkspace.shared.open(f) }
+                }
+                if let instance = game.instance {
+                    Button(T("导出诊断包…", "Export diagnostics…")) { InstanceActions.exportDiagnostics(instance, game: game) }.buttonStyle(.kiln)
                 }
                 if game.state == .running || game.state == .starting {
                     Button(T("结束进程", "Kill")) { game.kill() }.buttonStyle(.kilnDanger)

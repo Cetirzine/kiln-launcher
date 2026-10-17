@@ -24,6 +24,9 @@ struct MainView: View {
         .sheet(item: Binding(get: { state.modpackInstall }, set: { state.modpackInstall = $0 })) { s in
             ModpackInstallSheet(source: s).environment(state)
         }
+        .sheet(isPresented: Binding(get: { state.showImport }, set: { state.showImport = $0 })) {
+            ImportSheet().environment(state)
+        }
         .sheet(isPresented: Binding(get: { !state.manualDownloads.isEmpty }, set: { if !$0 { state.manualDownloads = [] } })) {
             ManualDownloadsSheet().environment(state)
         }

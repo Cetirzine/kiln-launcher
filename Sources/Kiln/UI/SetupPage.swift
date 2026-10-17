@@ -294,6 +294,15 @@ struct SystemSettings: View {
                           text: $s.msClientId).textFieldStyle(.roundedBorder).frame(maxWidth: 340)
             }
         }
+        Card(T("通知与快捷方式", "Notifications & shortcuts")) {
+            SettingRow(title: T("系统通知", "System notifications"),
+                       help: T("启动器在后台时，任务完成或失败、游戏崩溃会发送通知", "When the launcher is in the background, get notified when tasks finish or fail and when the game crashes")) {
+                Toggle("", isOn: $s.systemNotifications).toggleStyle(.switch).labelsHidden()
+            }
+            Text(T("在“快捷指令”App 或聚焦搜索中输入“Kiln”即可启动某个版本；也可以在版本的右键菜单中创建桌面快捷方式，或复制 kiln://launch/版本名 链接。",
+                   "Type “Kiln” in the Shortcuts app or Spotlight to launch an instance. You can also create a desktop shortcut from an instance's context menu, or copy its kiln://launch/<name> link."))
+                .font(.system(size: 11.5)).foregroundStyle(Theme.text3).fixedSize(horizontal: false, vertical: true)
+        }
         Card(T("更新", "Updates")) {
             SettingRow(title: T("自动检查更新", "Check for updates automatically"),
                        help: T("当前版本 \(AppInfo.version)。有新版本时会提示，确认后自动下载并替换。", "Current version \(AppInfo.version). When a new version is out you'll be asked, then it downloads and replaces itself.")) {

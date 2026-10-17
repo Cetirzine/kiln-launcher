@@ -43,6 +43,12 @@ enum Entry {
         if let i = args.firstIndex(of: "--modpack-install-test"), args.count > i + 2 {
             exit(ModpackInstallCheck.run(source: args[i + 1], folder: URL(fileURLWithPath: args[i + 2])) ? 0 : 1)
         }
+        if let i = args.firstIndex(of: "--import-test"), args.count > i + 2 {
+            exit(ImportCheck.run(source: URL(fileURLWithPath: args[i + 1]), folder: URL(fileURLWithPath: args[i + 2])) ? 0 : 1)
+        }
+        if let i = args.firstIndex(of: "--diagnostics-check"), args.count > i + 3 {
+            exit(DiagnosticsCheck.run(folder: URL(fileURLWithPath: args[i + 1]), name: args[i + 2], output: URL(fileURLWithPath: args[i + 3])) ? 0 : 1)
+        }
         if args.contains("--skin-check") {
             exit(SkinCheck.run() ? 0 : 1)
         }

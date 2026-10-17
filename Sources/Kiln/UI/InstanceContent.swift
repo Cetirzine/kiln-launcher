@@ -38,6 +38,14 @@ struct WorldsView: View {
                                 .font(.system(size: 11.5)).foregroundStyle(Theme.text2)
                         }
                         Spacer()
+                        Button(T("进入", "Play")) {
+                            state.select(instance)
+                            state.launchSelected(options: LaunchOptions(world: w.name))
+                        }
+                        .buttonStyle(.kilnPrimary)
+                        .disabled(!instance.supportsQuickPlay || state.isLaunching)
+                        .help(instance.supportsQuickPlay ? T("启动游戏并直接进入这个存档", "Launch the game straight into this world")
+                                                         : T("Minecraft 1.20 及以上才能直接进入存档", "Jumping straight into a world needs Minecraft 1.20 or later"))
                         Button(T("导出…", "Export…")) { export(w) }.buttonStyle(.kiln)
                         IconButton(systemImage: "folder", help: T("在访达中显示", "Show in Finder")) { NSWorkspace.shared.open(w.url) }
                         IconButton(systemImage: "trash", help: T("删除", "Delete")) { delete(w) }

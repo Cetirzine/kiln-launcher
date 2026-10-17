@@ -26,9 +26,11 @@ A native macOS launcher for Minecraft: Java Edition, built with SwiftUI and tune
 - Searches and downloads mods, resource packs and shaders from Modrinth and CurseForge (via the MCIM mirror, or with your own API key), installing required dependencies automatically
 - Identifies installed mods and updates them one by one or all at once
 - Installs Modrinth (.mrpack) and CurseForge modpacks and exports instances as .mrpack
-- Renames and duplicates instances; imports and exports worlds; manages resource packs, shaders and screenshots
+- Imports instances from Prism Launcher, MultiMC / PolyMC, the CurseForge app and official launcher profiles (reinstalls the same game and loader, then copies mods, worlds and settings)
+- Renames and duplicates instances; imports and exports worlds, and jumps straight into a world (1.20+); manages resource packs, shaders and screenshots; tracks play time per instance
 - Chinese mod names, with search by Chinese, pinyin or pinyin initials; the name table lives in `assets/mod-names-zh.json` and accepts pull requests
-- Shows game logs and explains common crash causes
+- Shows game logs, explains common crash causes, and exports a diagnostics bundle (logs, crash reports, mod list, system info; sign-in tokens hidden)
+- macOS integration: notifications when tasks finish or the game crashes in the background, download progress on the Dock icon, recent instances in the Dock menu, and launching instances from Shortcuts, Spotlight, desktop shortcuts or `kiln://launch/<name>` links
 - Checks for new versions and, once you confirm, downloads, verifies and replaces itself
 
 ## Apple silicon
@@ -61,7 +63,7 @@ Only the Xcode Command Line Tools are required.
 ./scripts/build-app.sh
 ```
 
-This produces `build/Kiln.app` (arm64, release build).
+This produces `build/Kiln.app` (arm64, release build). With full Xcode installed it also generates the metadata the Shortcuts app needs; otherwise that step is skipped.
 
 ## License
 

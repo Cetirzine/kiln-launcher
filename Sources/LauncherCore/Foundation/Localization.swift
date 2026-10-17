@@ -67,5 +67,5 @@ package enum AppInfo {
     /// 应用名称。注意：按《PCL 存储库合理使用指南》，不得使用会与 PCL 混淆的名称。
     package static let shortName = "Kiln"
     package static let author = "NelsonPence"
-    package static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.2.8" }
+    package static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.2.9" }
 }

@@ -54,6 +54,8 @@ package final class LauncherSettings {
     package var curseforgeKey: String { didSet { d.set(curseforgeKey, forKey: "curseforgeKey") } }
     package var lastUpdateCheck: Date? { didSet { d.set(lastUpdateCheck, forKey: "lastUpdateCheck") } }
     package var debugLog: Bool { didSet { d.set(debugLog, forKey: "debugLog") } }
+    /// 启动器在后台时发送系统通知
+    package var systemNotifications: Bool { didSet { d.set(systemNotifications, forKey: "systemNotifications") } }
 
     private init() {
         d.register(defaults: [
@@ -100,6 +102,7 @@ package final class LauncherSettings {
         autoCheckUpdates = d.object(forKey: "autoCheckUpdates") as? Bool ?? true
         curseforgeKey = d.string(forKey: "curseforgeKey") ?? ""
         lastUpdateCheck = d.object(forKey: "lastUpdateCheck") as? Date
+        systemNotifications = d.object(forKey: "systemNotifications") as? Bool ?? true
         debugLog = d.bool(forKey: "debugLog") || ProcessInfo.processInfo.environment["KILN_DEBUG"] != nil
         Localizer.shared.language = language
     }
@@ -128,10 +131,14 @@ package final class LauncherSettings {
         package var serverEnter: String?
         package var customInfo: String?
         package var lastPlayed: Date?
+        /// 累计游戏时长（秒）
+        package var playTime: Double?
         /// 自定义图标（方块），为空时按版本类型自动选择
         package var icon: String?
         /// 固定使用的账号（Account.id），为空时使用当前账号
         package var account: String?
+        /// 从其他启动器导入时的来源目录
+        package var importedFrom: String?
         package init() {}
     }
 

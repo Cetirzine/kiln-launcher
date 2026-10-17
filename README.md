@@ -54,9 +54,11 @@
 - Modrinth 与 CurseForge（经 MCIM 镜像，可填写官方 API 密钥）的 Mod、资源包、光影搜索与下载，Mod 可按加载器筛选；安装时自动补全前置 Mod
 - 已安装的 Mod 自动识别并检查更新，可逐个或一键更新
 - 整合包：安装 Modrinth（.mrpack）与 CurseForge 整合包，导出为 .mrpack；作者禁止第三方下载的文件会优先从 Modrinth 获取同一文件
-- 版本重命名、复制，存档导入导出，资源包、光影与截图管理
+- 从其他启动器导入：Prism Launcher、MultiMC / PolyMC、CurseForge App 与官方启动器的配置（重新安装同样的游戏与加载器，再复制 Mod、存档与设置）
+- 版本重命名、复制，记录每个版本的游戏时长；存档导入导出，一键直接进入存档（1.20 及以上）；资源包、光影与截图管理
 - Mod 中文名：英文名后显示中文名，可用中文、拼音或拼音首字母搜索（如 `jxdl` → 机械动力）
-- 游戏日志（解析 log4j XML）、崩溃原因分析、导出启动脚本
+- 游戏日志（解析 log4j XML）、崩溃原因分析、导出诊断包（日志、崩溃报告、Mod 列表与系统信息，登录令牌自动隐藏）、导出启动脚本
+- 系统集成：启动器在后台时，任务完成、游戏崩溃会发系统通知；Dock 图标显示下载进度，Dock 菜单列出最近玩过的版本；可以在“快捷指令”、聚焦搜索、桌面快捷方式或 `kiln://launch/版本名` 链接中直接启动某个版本
 - 自动检查新版本，确认后下载、校验并替换自身
 - 简体中文 / 繁體中文（自动转换）/ English
 
@@ -85,7 +87,7 @@
 ./scripts/build-app.sh
 ```
 
-生成 `build/Kiln.app`（arm64，release 优化）。需要同时支持 Intel Mac 时：
+生成 `build/Kiln.app`（arm64，release 优化）。装有完整的 Xcode 时会同时生成“快捷指令”所需的元数据，否则跳过这一步。需要同时支持 Intel Mac 时：
 
 ```bash
 ARCH="arm64 x86_64" ./scripts/build-app.sh
