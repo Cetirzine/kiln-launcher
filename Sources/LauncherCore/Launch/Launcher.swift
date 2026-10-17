@@ -270,6 +270,9 @@ package enum Launcher {
                 jvm.append(logArg.replacingOccurrences(of: "${path}", with: path.path))
             }
         }
+        if java.major == 8 && instance.loaders.contains("Forge"), let security = legacyJarSecurity() {
+            jvm.append("-Djava.security.properties=\(security.path)")
+        }
         // 外置登录 / 离线皮肤：authlib-injector
         jvm += login.jvmArgs
         jvm += custom
@@ -316,6 +319,13 @@ package enum Launcher {
            let fixed = GLFWPatch.patchedJar(for: URL(fileURLWithPath: cp[i])) {
             cp[i] = fixed.path
         }
+        // 同上，Fabric / Quilt 会扫描类路径：换成不含 Java 18+ 类的 lwjgl
+        if ctx.arch == "arm64" && instance.lwjglNeedsArm64Patch && s.arm64Native,
+           !instance.loaders.filter({ $0 == "Fabric" || $0 == "Quilt" }).isEmpty,
+           let i = cp.firstIndex(where: { $0.hasSuffix("/lwjgl-\(Lwjgl.arm64Version).jar") }),
+           let stripped = MultiReleasePatch.strippedJar(for: URL(fileURLWithPath: cp[i])) {
+            cp[i] = stripped.path
+        }
         let jar = instance.clientJar.path
         if FileManager.default.fileExists(atPath: jar) { cp.append(jar) }
         var size = (854, 480)
@@ -355,6 +365,18 @@ package enum Launcher {
             return r
         }
         return jvm.map(apply) + [mainClass] + game.map(apply)
+    }
+
+    /// 新版 Java 8（8u351 起）不再承认 SHA-1 签名的 jar，而 1.7.10 ~ 1.12.2 时期的 Mod 大多用 SHA-1 签名。
+    /// Forge 会因此报告签名不符，Reika 系列（DragonAPI）等检查自身签名的 Mod 就会拒绝加载。
+    /// 只针对 jar 签名恢复当时的规则（TLS 等其他规则不变），并且只用于 Java 8 上的 Forge。
+    static func legacyJarSecurity() -> URL? {
+        let url = Paths.support.appendingPathComponent("legacy-jar.security")
+        let text = "# Kiln：旧版 Forge Mod 的 jar 签名（SHA-1）\njdk.jar.disabledAlgorithms=MD2, MD5, RSA keySize < 1024, DSA keySize < 1024, include jdk.disabled.namedCurves\n"
+        if (try? String(contentsOf: url, encoding: .utf8)) != text {
+            do { try text.write(to: url, atomically: true, encoding: .utf8) } catch { return nil }
+        }
+        return url
     }
 
     /// 从资源文件中找到 Minecraft 的 .icns 图标

@@ -18,7 +18,7 @@ A native macOS launcher for Minecraft: Java Edition, built with SwiftUI and tune
 
 ## What it does
 
-- Installs and launches vanilla, Fabric, Quilt, Forge and NeoForge versions; OptiFine and LiteLoader can be added alongside Forge where available
+- Installs and launches vanilla, Fabric, Quilt, Forge and NeoForge versions (including NeoForge for 1.20.1); OptiFine and LiteLoader can be added alongside Forge where available
 - Finds, selects or downloads the right Java runtime (Mojang runtimes, Azul Zulu for arm64 Java 8)
 - Signs in with a Microsoft account (OAuth 2.0 device code flow), an authlib-injector skin site such as LittleSkin (passwords are never stored), or an offline profile; switch accounts with ⌃⌘1–9 and pin an account to an instance
 - Skins: local or same-name player skins for offline accounts; upload skins and switch capes for Microsoft accounts
@@ -26,7 +26,7 @@ A native macOS launcher for Minecraft: Java Edition, built with SwiftUI and tune
 - Searches and downloads mods, resource packs and shaders from Modrinth and CurseForge (via the MCIM mirror, or with your own API key), installing required dependencies automatically
 - Identifies installed mods and updates them one by one or all at once
 - Installs Modrinth (.mrpack) and CurseForge modpacks and exports instances as .mrpack
-- Imports instances from Prism Launcher, MultiMC / PolyMC, the CurseForge app and official launcher profiles (reinstalls the same game and loader, then copies mods, worlds and settings)
+- Imports instances from Prism Launcher, MultiMC / PolyMC (instance folders or exported .zip files), the CurseForge app and official launcher profiles (reinstalls the same game and loader, then copies mods, worlds and settings; components Kiln can't reproduce, such as Babric or Cleanroom, are named)
 - Renames and duplicates instances; imports and exports worlds, and jumps straight into a world (1.20+); manages resource packs, shaders and screenshots; tracks play time per instance
 - Chinese mod names, with search by Chinese, pinyin or pinyin initials; the name table lives in `assets/mod-names-zh.json` and accepts pull requests
 - Shows game logs, explains common crash causes, and exports a diagnostics bundle (logs, crash reports, mod list, system info; sign-in tokens hidden)

@@ -51,6 +51,18 @@ enum Snapshot {
             LauncherImport.Candidate(source: .curseforge, name: "All the Mods 9", gameVersion: "1.20.1", loader: .init(kind: "Forge", version: "47.2.0"),
                                      contentDir: home.appendingPathComponent("Documents/curseforge/minecraft/Instances/ATM9")),
             LauncherImport.Candidate(source: .official, name: "生存", gameVersion: "1.21.4", loader: nil, contentDir: home.appendingPathComponent("Games/survival")),
+            {
+                var c = LauncherImport.Candidate(source: .multimc, name: "Wappa 5", gameVersion: "1.21.1", loader: .init(kind: "NeoForge", version: "21.1.235"),
+                                                 contentDir: home.appendingPathComponent("MultiMC/instances/Wappa 5/.minecraft"))
+                c.warning = T("这个实例在启动前运行命令来下载或更新 Mod，Kiln 不会运行它，导入的 Mod 可能不全", "This instance runs a pre-launch command to download or update mods; Kiln won't run it")
+                return c
+            }(),
+            {
+                var c = LauncherImport.Candidate(source: .prism, name: "Herodotus", gameVersion: "1.12.2", loader: nil,
+                                                 contentDir: home.appendingPathComponent("Library/Application Support/PrismLauncher/instances/Herodotus/.minecraft"))
+                c.unsupported = T("使用了 Kiln 暂不支持的组件：Cleanroom", "Uses components Kiln doesn't support: Cleanroom")
+                return c
+            }(),
         ]).background(Theme.panel))
         state.manualDownloads = [Modpack.ManualFile(title: "ServerCore", fileName: "servercore-1.3.5-1.19.4.jar",
                                                      pageURL: "https://www.curseforge.com", destination: URL(fileURLWithPath: "/tmp/x"), sha1: nil)]

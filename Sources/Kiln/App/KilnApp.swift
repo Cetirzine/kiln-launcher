@@ -153,6 +153,8 @@ final class AppState {
 
     /// 显示“从其他启动器导入”窗口
     var showImport = false
+    /// 拖到窗口上的实例压缩包，打开导入窗口时加入
+    var importFile: URL?
     /// 待安装的整合包（显示安装窗口）
     var modpackInstall: ModpackSource?
     /// 整合包中需要手动下载的文件

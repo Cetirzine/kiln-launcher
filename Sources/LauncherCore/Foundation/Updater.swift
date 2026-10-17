@@ -164,7 +164,7 @@ package enum Updater {
     }
 
     @discardableResult
-    static func run(_ tool: String, _ args: [String]) throws -> String {
+    package static func run(_ tool: String, _ args: [String]) throws -> String {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: tool)
         p.arguments = args

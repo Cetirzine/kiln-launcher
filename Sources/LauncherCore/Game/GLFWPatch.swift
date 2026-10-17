@@ -95,3 +95,39 @@ package enum GLFWPatch {
         return found > 0 ? Data(bytes) : nil
     }
 }
+
+/// lwjgl-3.3.1.jar 是多版本 jar，META-INF/versions/19 中有 Java 19 的类。
+/// 旧版 Fabric Loader（如 0.4.x）启动时会用旧的 ASM 读取类路径上所有的类，遇到这些类就会崩溃
+/// （Unsupported class file major version 63）。这些类只是新版 Java 上的可选实现，去掉后 LWJGL 使用通用实现
+/// （已在 Java 8、17、21 上验证），因此为 Fabric / Quilt 生成一份去掉它们的副本。
+package enum MultiReleasePatch {
+    package static func strippedJar(for original: URL) -> URL? {
+        let fm = FileManager.default
+        let stripped = original.deletingLastPathComponent()
+            .appendingPathComponent(original.deletingPathExtension().lastPathComponent + "-kiln-java17.jar")
+        if fm.fileExists(atPath: stripped.path) { return stripped }
+        let newer = Zip.list(original).filter { entry in
+            guard entry.hasPrefix("META-INF/versions/"), let v = Int(entry.split(separator: "/").dropFirst(2).first ?? "") else { return false }
+            return v > 17
+        }
+        guard !newer.isEmpty else { return nil }
+        let tmp = Paths.cache.appendingPathComponent("mr-\(UUID().uuidString).jar")
+        defer { try? fm.removeItem(at: tmp) }
+        do {
+            try fm.copyItem(at: original, to: tmp)
+            let zip = Process()
+            zip.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+            zip.arguments = ["-q", "-d", tmp.path] + newer
+            zip.standardOutput = FileHandle.nullDevice
+            try zip.run()
+            zip.waitUntilExit()
+            guard zip.terminationStatus == 0 else { return nil }
+            try fm.moveItem(at: tmp, to: stripped)
+            log("[LWJGL] 已生成 \(stripped.lastPathComponent)（去掉 Java 18+ 的类）")
+            return stripped
+        } catch {
+            log("[LWJGL] 生成 \(stripped.lastPathComponent) 失败：\(error.friendly)")
+            return nil
+        }
+    }
+}

@@ -36,7 +36,11 @@ struct MainView: View {
             _ = p.loadObject(ofClass: URL.self) { url, _ in
                 guard let url, ["mrpack", "zip"].contains(url.pathExtension.lowercased()) else { return }
                 Task { @MainActor in
-                    if (try? Modpack.inspect(url)) != nil { AppState.shared.modpackInstall = .file(url) }
+                    // Prism / MultiMC 导出的实例
+                    if LauncherImport.isInstanceArchive(url) {
+                        AppState.shared.importFile = url
+                        AppState.shared.showImport = true
+                    } else if (try? Modpack.inspect(url)) != nil { AppState.shared.modpackInstall = .file(url) }
                     else { Hint.show(T("不是支持的整合包", "Not a supported modpack"), .red) }
                 }
             }

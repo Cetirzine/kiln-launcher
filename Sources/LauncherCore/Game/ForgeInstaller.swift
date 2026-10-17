@@ -8,7 +8,12 @@ package enum ForgeKind: String, CaseIterable, Identifiable, Sendable {
     var installerURL: (String) -> String {
         switch self {
         case .forge: return { "https://maven.minecraftforge.net/net/minecraftforge/forge/\($0)/forge-\($0)-installer.jar" }
-        case .neoforge: return { "https://maven.neoforged.net/releases/net/neoforged/neoforge/\($0)/neoforge-\($0)-installer.jar" }
+        case .neoforge: return { v in
+            // 1.20.1 的 NeoForge 沿用 Forge 的坐标：net.neoforged:forge:1.20.1-47.1.x
+            ForgeInstaller.isLegacyNeoForge(v)
+                ? "https://maven.neoforged.net/releases/net/neoforged/forge/\(v)/forge-\(v)-installer.jar"
+                : "https://maven.neoforged.net/releases/net/neoforged/neoforge/\(v)/neoforge-\(v)-installer.jar"
+        }
         }
     }
 }
@@ -34,12 +39,21 @@ package enum ForgeInstaller {
             let j = try await Net.json(urls: ["https://files.minecraftforge.net/net/minecraftforge/forge/maven-metadata.json",
                                               "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/maven-metadata.json"])
             return j[game].array.compactMap(\.string).reversed().map(Version.init(version:))
+        case .neoforge where game == "1.20.1":
+            let j = try await Net.json(urls: ["https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/forge"])
+            // 少数早期版本没有 1.20.1- 前缀（如 47.1.82）
+            return j["versions"].array.compactMap(\.string).filter { $0.hasPrefix("1.20.1-") }.reversed().map(Version.init(version:))
         case .neoforge:
             let j = try await Net.json(urls: ["https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge",
                                               "https://bmclapi2.bangbang93.com/neoforge/meta/api/maven/details/releases/net/neoforged/neoforge"])
             let all = j["versions"].array.compactMap(\.string)
             return all.filter { neoForgeGameVersion($0) == game }.reversed().map(Version.init(version:))
         }
+    }
+
+    /// 1.20.1 的 NeoForge（47.1.x，Maven 版本号带 1.20.1- 前缀）
+    package static func isLegacyNeoForge(_ version: String) -> Bool {
+        version.hasPrefix("1.20.1-") || version.hasPrefix("47.")
     }
 
     /// NeoForge 版本号对应的 Minecraft 版本：21.1.77 → 1.21.1，20.4.x → 1.20.4，26.1.0.3 → 26.1

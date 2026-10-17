@@ -44,7 +44,7 @@
 
 **启动器功能**
 
-- 原版、Fabric、Quilt、Forge、NeoForge 安装（Forge / NeoForge 运行安装器 processors，思路参考 [HMCL](https://github.com/HMCL-dev/HMCL)）
+- 原版、Fabric、Quilt、Forge、NeoForge 安装（包括 1.20.1 的 NeoForge；Forge / NeoForge 运行安装器 processors，思路参考 [HMCL](https://github.com/HMCL-dev/HMCL)）
 - 安装 Forge 时可同时加装 OptiFine 与 LiteLoader（只在该游戏版本有对应组件时显示）
 - 离线账号、微软账号与外置登录（LittleSkin 等 authlib-injector 皮肤站，不保存密码）；多账号一键切换（⌃⌘1～9），每个版本可固定使用某个账号
 - 皮肤：离线账号可使用本地皮肤或同名正版玩家的皮肤；微软账号可上传皮肤、切换披风
@@ -54,7 +54,7 @@
 - Modrinth 与 CurseForge（经 MCIM 镜像，可填写官方 API 密钥）的 Mod、资源包、光影搜索与下载，Mod 可按加载器筛选；安装时自动补全前置 Mod
 - 已安装的 Mod 自动识别并检查更新，可逐个或一键更新
 - 整合包：安装 Modrinth（.mrpack）与 CurseForge 整合包，导出为 .mrpack；作者禁止第三方下载的文件会优先从 Modrinth 获取同一文件
-- 从其他启动器导入：Prism Launcher、MultiMC / PolyMC、CurseForge App 与官方启动器的配置（重新安装同样的游戏与加载器，再复制 Mod、存档与设置）
+- 从其他启动器导入：Prism Launcher、MultiMC / PolyMC（实例文件夹或导出的 .zip）、CurseForge App 与官方启动器的配置（重新安装同样的游戏与加载器，再复制 Mod、存档与设置；Babric、Cleanroom 等无法还原的组件会说明原因）
 - 版本重命名、复制，记录每个版本的游戏时长；存档导入导出，一键直接进入存档（1.20 及以上）；资源包、光影与截图管理
 - Mod 中文名：英文名后显示中文名，可用中文、拼音或拼音首字母搜索（如 `jxdl` → 机械动力）
 - 游戏日志（解析 log4j XML）、崩溃原因分析、导出诊断包（日志、崩溃报告、Mod 列表与系统信息，登录令牌自动隐藏）、导出启动脚本

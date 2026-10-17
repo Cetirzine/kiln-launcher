@@ -263,9 +263,12 @@ package final class McInstance: Identifiable, Hashable {
             let key = loader == "Forge" ? "--fml.forgeVersion" : "--fml.neoForgeVersion"
             let args = json["arguments"]["game"].array.compactMap(\.string)
             if let i = args.firstIndex(of: key), i + 1 < args.count { return args[i + 1] }
-            // 旧版：net.minecraftforge:forge:1.12.2-14.23.5.2864
-            let lib = loader == "Forge" ? "net.minecraftforge:forge:" : "net.neoforged:neoforge:"
-            guard let name = libraryNames.first(where: { $0.hasPrefix(lib) }) else { return nil }
+            // 1.20.1 的 NeoForge 仍使用 --fml.forgeVersion
+            if loader == "NeoForge", let i = args.firstIndex(of: "--fml.forgeVersion"), i + 1 < args.count { return args[i + 1] }
+            // 旧版：net.minecraftforge:forge:1.12.2-14.23.5.2864；1.20.1 的 NeoForge：net.neoforged:forge:1.20.1-47.1.106
+            let libs = loader == "Forge" ? ["net.minecraftforge:forge:"] : ["net.neoforged:neoforge:", "net.neoforged:forge:"]
+            guard let name = libraryNames.first(where: { n in libs.contains { n.hasPrefix($0) } }),
+                  let lib = libs.first(where: { name.hasPrefix($0) }) else { return nil }
             var v = String(name.dropFirst(lib.count).split(separator: ":")[0])
             let game = vanillaVersion
             if v.hasPrefix(game + "-") { v = String(v.dropFirst(game.count + 1)) }

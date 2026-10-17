@@ -106,7 +106,7 @@ package enum InstanceManager {
         let tmp = Paths.cache.appendingPathComponent("world-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tmp) }
-        try Zip.run(["-q", "-o", archive.path, "-d", tmp.path])
+        try Zip.extractAll(archive, to: tmp)
         // 找到包含 level.dat 的目录
         var root: URL?
         if fm.fileExists(atPath: tmp.appendingPathComponent("level.dat").path) {

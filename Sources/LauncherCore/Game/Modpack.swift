@@ -96,8 +96,7 @@ package enum Modpack {
         let tmp = Paths.cache.appendingPathComponent("modpack-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tmp) }
-        // unzip 会去掉压缩包中的 ../ 路径
-        try Zip.run(["-q", "-o", archive.path, "-d", tmp.path])
+        try Zip.extractAll(archive, to: tmp)
         let overrideDirs: [String]
         switch info.format {
         case .modrinth: overrideDirs = ["overrides", "client-overrides"]
@@ -212,9 +211,11 @@ package enum Modpack {
     }
 
     /// 整合包中的加载器版本 → Forge / NeoForge 的 Maven 版本号
-    static func mavenVersion(_ kind: ForgeKind, _ v: String, game: String) async throws -> String {
+    package static func mavenVersion(_ kind: ForgeKind, _ v: String, game: String) async throws -> String {
         let list = (try? await ForgeInstaller.versions(kind, game: game)) ?? []
-        if let hit = list.first(where: { $0.version == v || $0.display == v || $0.version.hasPrefix("\(game)-\(v)") }) {
+        // 早期 NeoForge 带 -beta 后缀：21.0.18 → 21.0.18-beta
+        if let hit = list.first(where: { $0.version == v || $0.display == v || $0.version == "\(game)-\(v)" })
+            ?? list.first(where: { $0.version.hasPrefix(v + "-") || $0.version.hasPrefix("\(game)-\(v)-") }) {
             return hit.version
         }
         if kind == .forge && !v.hasPrefix(game) { return "\(game)-\(v)" }

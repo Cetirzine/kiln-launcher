@@ -45,6 +45,12 @@ enum SelfTest {
         if FileManager.default.fileExists(atPath: glfw.path), let d = Zip.read(glfw, "org/lwjgl/glfw/GLFW.class") {
             expect(GLFWPatch.patchClass(d) != nil, "GLFW 窗口图标补丁")
         }
+        let lwjgl = LauncherSettings.shared.minecraftURL.appendingPathComponent("libraries/org/lwjgl/lwjgl/3.3.1/lwjgl-3.3.1.jar")
+        if FileManager.default.fileExists(atPath: lwjgl.path), let stripped = MultiReleasePatch.strippedJar(for: lwjgl) {
+            let entries = Zip.list(stripped)
+            expect(!entries.contains { $0.hasPrefix("META-INF/versions/19/") } && entries.contains { $0.hasPrefix("META-INF/versions/9/") }
+                   && entries.contains("org/lwjgl/Version.class"), "LWJGL 去掉 Java 18+ 的类（旧版 Fabric Loader）")
+        }
         let crash = CrashAnalyzer.analyze(["Exception in thread \"main\" java.lang.UnsupportedClassVersionError: foo"])
         expect(crash != nil, "崩溃分析：Java 版本")
         expect(Updater.isNewer("0.2.10", than: "0.2.9") && !Updater.isNewer("0.2.1", than: "0.2.1") && Updater.isNewer("1.0", than: "0.9.9"),
@@ -195,6 +201,27 @@ enum SelfTest {
                    && !fm.fileExists(atPath: dst.appendingPathComponent("logs").path) && !fm.fileExists(atPath: dst.appendingPathComponent("versions").path)
                    && fm.fileExists(atPath: dst.appendingPathComponent(".kiln").path), "导入：复制 Mod 与存档，跳过日志与游戏文件")
             expect(LauncherImport.availableName("a/b:c", folder: root) == "a-b-c", "导入：名称中的非法字符")
+            // 真实实例中常见的情况（来自 GitHub 上公开的 Prism / MultiMC 实例）
+            expect(LauncherImport.cleanJvmArgs(#"-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:G1NewSizePercent=30 -Xmx8G -Dfml.readTimeout=180 -XX:+PerfDisableSharedMem -Xss4M -XX:+UseCompactObjectHeaders"#)
+                   == "-Dfml.readTimeout=180 -Xss4M" && LauncherImport.cleanJvmArgs("-XX:+UseZGC") == nil, "导入：去掉 -XX 调优与内存参数，保留 -D 与 -Xss")
+            let clean = root.appendingPathComponent("cleanroom")
+            try fm.createDirectory(at: clean.appendingPathComponent(".minecraft"), withIntermediateDirectories: true)
+            try "InstanceType=OneSix\nname=Herodotus\nOverrideCommands=true\nPreLaunchCommand=java -jar packwiz-installer-bootstrap.jar\n"
+                .write(to: clean.appendingPathComponent("instance.cfg"), atomically: true, encoding: .utf8)
+            try #"{"components":[{"uid":"net.minecraft","version":"1.12.2"},{"cachedName":"Cleanroom","uid":"net.minecraftforge","version":"0.4.4-alpha"}]}"#
+                .write(to: clean.appendingPathComponent("mmc-pack.json"), atomically: true, encoding: .utf8)
+            let cr = LauncherImport.inspect(folder: clean)
+            expect(cr?.unsupported?.contains("Cleanroom") == true && cr?.loader == nil && cr?.warning != nil, "导入：Cleanroom 不当作 Forge，启动前命令给出提示")
+            try #"{"components":[{"uid":"net.minecraft","version":"b1.7.3"},{"cachedName":"Babric","uid":"babric"},{"uid":"net.fabricmc.fabric-loader","version":"0.19.5"}]}"#
+                .write(to: clean.appendingPathComponent("mmc-pack.json"), atomically: true, encoding: .utf8)
+            expect(LauncherImport.inspect(folder: clean)?.unsupported?.contains("Babric") == true, "导入：Babric 标记为不支持")
+            // 导出的压缩包：实例在一层文件夹里
+            let zip = root.appendingPathComponent("export.zip")
+            _ = try Updater.run("/usr/bin/ditto", ["-c", "-k", "--keepParent", prism.path, zip.path])
+            let z = try LauncherImport.inspect(archive: zip)
+            expect(LauncherImport.isInstanceArchive(zip) && z.name == "My Pack" && z.loader?.kind == "Fabric" && z.worldCount == 1 && z.temporary != nil,
+                   "导入：Prism 导出的压缩包")
+            if let t = z.temporary { try? fm.removeItem(at: t) }
             try? fm.removeItem(at: root)
         } catch { expect(false, "导入：\(error.friendly)") }
         print(failures == 0 ? "全部通过" : "\(failures) 项失败")
@@ -313,7 +340,9 @@ enum SelfTest {
                 let parser = Log4jParser()
                 var output: [String] = []
                 let handle = pipe.fileHandleForReading
-                while Date().timeIntervalSince(start) < 180 && p.isRunning {
+                // KILN_TEST_TIMEOUT=<秒>：大型整合包需要更久
+                let limit = ProcessInfo.processInfo.environment["KILN_TEST_TIMEOUT"].flatMap(Double.init) ?? 180
+                while Date().timeIntervalSince(start) < limit && p.isRunning {
                     let data = handle.availableData
                     if data.isEmpty { try await Task.sleep(nanoseconds: 200_000_000); continue }
                     let text = String(decoding: data, as: UTF8.self)
@@ -685,8 +714,19 @@ enum ImportCheck {
         nonisolated(unsafe) var ok = false
         Task { @MainActor in
             defer { sem.signal() }
-            guard let c = LauncherImport.inspect(folder: source) else { print("✘ 无法识别实例：\(source.path)"); return }
-            print("识别：\(c.source.rawValue) · \(c.name) · \(c.summary) · \(c.modCount) 个 Mod · \(c.worldCount) 个存档 · 内存 \(c.memoryGB.map { "\($0) GB" } ?? "默认")")
+            // 实例文件夹、导出的压缩包，或 official:<官方游戏目录>
+            var found: LauncherImport.Candidate?
+            if source.path.contains("official:") {
+                found = LauncherImport.officialProfiles(URL(fileURLWithPath: source.path.components(separatedBy: "official:")[1])).first
+            } else if !((try? source.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false) {
+                do { found = try LauncherImport.inspect(archive: source) } catch { print("✘ \(error.friendly)"); return }
+            } else {
+                found = LauncherImport.inspect(folder: source)
+            }
+            guard let c = found else { print("✘ 无法识别实例：\(source.path)"); return }
+            print("识别：\(c.source.rawValue) · \(c.name) · \(c.summary) · \(c.modCount) 个 Mod · \(c.worldCount) 个存档 · 内存 \(c.memoryGB.map { "\($0) GB" } ?? "默认") · JVM 参数 \(c.jvmArgs ?? "无")")
+            if let w = c.warning { print("提示：\(w)") }
+            if let u = c.unsupported { print("不支持：\(u)") }
             do {
                 let name = LauncherImport.availableName(c.name, folder: folder)
                 let t0 = Date()
@@ -695,8 +735,10 @@ enum ImportCheck {
                 let worlds = InstanceManager.worlds(instance).map(\.name)
                 print(String(format: "导入为 %@（%@），用时 %.1f 秒；存档：%@；独立目录：%@；内存：%@", name, instance.description, Date().timeIntervalSince(t0),
                              worlds.joined(separator: ", "), instance.isolated ? "是" : "否", instance.setup.memoryGB.map { "\($0) GB" } ?? "默认"))
+                let mods = ((try? FileManager.default.contentsOfDirectory(atPath: instance.gameDir.appendingPathComponent("mods").path)) ?? []).count
+                print("Mod：\(mods)，加载器版本：\(c.loader.flatMap { instance.loaderVersion($0.kind) } ?? "-")")
                 ok = instance.error == nil && instance.loaders.contains(c.loader?.kind ?? "") == (c.loader != nil) && worlds.count == c.worldCount
-                    && instance.setup.importedFrom == c.contentDir.path
+                    && (c.temporary != nil || instance.setup.importedFrom == c.contentDir.path)
                 print(ok ? "✔ 导入成功" : "✘ 导入结果不符")
             } catch { print("✘ \(error.friendly)") }
         }
@@ -722,5 +764,96 @@ enum DiagnosticsCheck {
         }
         while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
         return ok
+    }
+}
+
+/// `--import-samples <样本目录>`：用其他启动器生成的真实文件检查识别结果，每行输出一个 JSON
+/// 样本目录下：cf/（minecraftinstance.json）、mmcpack/（mmc-pack.json）、cfg/（instance.cfg）、profiles/（launcher_profiles.json）
+enum ImportSamples {
+    nonisolated static func run(dir: URL) {
+        let fm = FileManager.default
+        func emit(_ kind: String, _ file: String, _ c: LauncherImport.Candidate?) {
+            var o: [String: Any] = ["kind": kind, "file": file, "ok": c != nil]
+            if let c {
+                o["name"] = c.name; o["game"] = c.gameVersion; o["loader"] = c.loader.map { "\($0.kind) \($0.version)" } ?? ""
+                o["memory"] = c.memoryGB ?? 0; o["jvm"] = c.jvmArgs ?? ""; o["last"] = c.lastPlayed.map { ISO8601DateFormatter().string(from: $0) } ?? ""
+                o["source"] = c.source.rawValue; o["dir"] = c.contentDir.lastPathComponent; o["unsupported"] = c.unsupported ?? ""
+            }
+            let data = try! JSONSerialization.data(withJSONObject: o, options: [.sortedKeys])
+            print(String(decoding: data, as: UTF8.self))
+        }
+        func files(_ sub: String) -> [URL] {
+            ((try? fm.contentsOfDirectory(at: dir.appendingPathComponent(sub), includingPropertiesForKeys: nil)) ?? []).sorted { $0.path < $1.path }
+        }
+        let tmp = fm.temporaryDirectory.appendingPathComponent("kiln-samples-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: tmp) }
+        for f in files("cf") {
+            let d = tmp.appendingPathComponent("cf/" + f.lastPathComponent)
+            try? fm.createDirectory(at: d, withIntermediateDirectories: true)
+            try? fm.copyItem(at: f, to: d.appendingPathComponent("minecraftinstance.json"))
+            emit("cf", f.lastPathComponent, LauncherImport.inspect(folder: d))
+        }
+        for f in files("mmcpack") {
+            let d = tmp.appendingPathComponent("mmc/" + f.lastPathComponent)
+            try? fm.createDirectory(at: d.appendingPathComponent(".minecraft"), withIntermediateDirectories: true)
+            try? fm.copyItem(at: f, to: d.appendingPathComponent("mmc-pack.json"))
+            try? "InstanceType=OneSix\nname=Sample\n".write(to: d.appendingPathComponent("instance.cfg"), atomically: true, encoding: .utf8)
+            emit("mmcpack", f.lastPathComponent, LauncherImport.inspect(folder: d))
+        }
+        for f in files("cfg") {
+            let d = tmp.appendingPathComponent("cfg/" + f.lastPathComponent)
+            try? fm.createDirectory(at: d.appendingPathComponent(".minecraft"), withIntermediateDirectories: true)
+            try? fm.copyItem(at: f, to: d.appendingPathComponent("instance.cfg"))
+            // 没有 mmc-pack.json 的旧格式靠 IntendedVersion；新格式补一个最简单的 mmc-pack.json
+            let text = (try? String(contentsOf: f, encoding: .utf8)) ?? ""
+            if text.range(of: #"(?m)^IntendedVersion=\S"#, options: .regularExpression) == nil {
+                try? #"{"components":[{"uid":"net.minecraft","version":"1.20.1"}],"formatVersion":1}"#
+                    .write(to: d.appendingPathComponent("mmc-pack.json"), atomically: true, encoding: .utf8)
+            }
+            emit("cfg", f.lastPathComponent, LauncherImport.inspect(folder: d))
+        }
+        for f in files("profiles") {
+            let d = tmp.appendingPathComponent("profiles/" + f.lastPathComponent)
+            try? fm.createDirectory(at: d, withIntermediateDirectories: true)
+            try? fm.copyItem(at: f, to: d.appendingPathComponent("launcher_profiles.json"))
+            let list = LauncherImport.officialProfiles(d, requireFiles: false)
+            if list.isEmpty { emit("profiles", f.lastPathComponent, nil) }
+            for c in list { emit("profiles", f.lastPathComponent, c) }
+        }
+    }
+}
+
+/// `--import-resolve <列表文件>`：每行“游戏版本|加载器 版本”，检查能否找到对应的游戏与加载器（不下载安装）
+enum ImportResolve {
+    nonisolated static func run(list: URL) {
+        let sem = DispatchSemaphore(value: 0)
+        Task { @MainActor in
+            defer { sem.signal() }
+            let lines = ((try? String(contentsOf: list, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+            for line in lines {
+                let parts = line.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+                guard parts.count == 2 else { continue }
+                let game = parts[0], lv = parts[1].split(separator: " ").map(String.init)
+                var result = ""
+                do {
+                    _ = try await VersionManifest.find(game)
+                    if lv.count == 2 {
+                        switch lv[0] {
+                        case "Fabric", "Quilt":
+                            let list = try await ModLoaderKind(rawValue: lv[0])!.versions(for: game)
+                            result = list.contains { $0.version == lv[1] } ? "ok" : "loader-missing (\(list.count) versions)"
+                        case "Forge", "NeoForge":
+                            let kind = ForgeKind(rawValue: lv[0])!
+                            let maven = try await Modpack.mavenVersion(kind, lv[1], game: game)
+                            let list = try await ForgeInstaller.versions(kind, game: game)
+                            result = list.contains { $0.version == maven } ? "ok \(maven)" : "loader-missing \(maven) (\(list.count) versions)"
+                        default: result = "unsupported-loader"
+                        }
+                    } else { result = "ok" }
+                } catch { result = "error: \(error.friendly)" }
+                print("\(game) | \(parts[1]) → \(result)")
+            }
+        }
+        while sem.wait(timeout: .now() + 0.05) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
     }
 }

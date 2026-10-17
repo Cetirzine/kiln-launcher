@@ -49,6 +49,14 @@ enum Entry {
         if let i = args.firstIndex(of: "--diagnostics-check"), args.count > i + 3 {
             exit(DiagnosticsCheck.run(folder: URL(fileURLWithPath: args[i + 1]), name: args[i + 2], output: URL(fileURLWithPath: args[i + 3])) ? 0 : 1)
         }
+        if let i = args.firstIndex(of: "--import-samples"), args.count > i + 1 {
+            ImportSamples.run(dir: URL(fileURLWithPath: args[i + 1]))
+            exit(0)
+        }
+        if let i = args.firstIndex(of: "--import-resolve"), args.count > i + 1 {
+            ImportResolve.run(list: URL(fileURLWithPath: args[i + 1]))
+            exit(0)
+        }
         if args.contains("--skin-check") {
             exit(SkinCheck.run() ? 0 : 1)
         }

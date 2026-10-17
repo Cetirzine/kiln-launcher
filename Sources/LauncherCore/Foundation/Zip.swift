@@ -10,10 +10,21 @@ package enum Zip {
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
+        // 遇到无法创建的文件名时 unzip 会询问是否继续；不给输入，避免一直等待
+        p.standardInput = FileHandle.nullDevice
         try p.run()
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         return data
+    }
+
+    /// 解压整个压缩包。优先用 ditto：unzip 遇到含特殊字符（如 §）的文件名会中途停止。
+    /// 含有绝对路径或 ../ 的压缩包改用 unzip，它会去掉这些路径
+    package static func extractAll(_ archive: URL, to dest: URL) throws {
+        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        let unsafe = list(archive).contains { $0.hasPrefix("/") || $0.split(separator: "/").contains("..") }
+        if !unsafe, (try? Updater.run("/usr/bin/ditto", ["-x", "-k", archive.path, dest.path])) != nil { return }
+        try run(["-q", "-o", archive.path, "-d", dest.path])
     }
 
     /// 读取压缩包中的单个文件
